@@ -1,0 +1,22 @@
+node_modules/
+.env
+*.log
+.DS_Store
+dist/
+
+# Phase 2: Database files
+*.db
+*.db-shm
+*.db-wal
+
+# Phase 2: User home directory storage
+.multi-agent-collab-tools/
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+Thumbs.DB

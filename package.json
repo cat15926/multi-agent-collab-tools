@@ -1,0 +1,25 @@
+{
+  "name": "multi-agent-collab-tools",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "从 0 到 1 构建多 Agent 协作工具 — 学习项目",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "phase1": "tsx src/phase-01-single-agent/cli.ts",
+    "phase2": "tsx src/phase-02-agent-identity/cli.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.115.0",
+    "better-sqlite3": "^11.7.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^26.1.1",
+    "tsx": "^4.23.1",
+    "typescript": "^7.0.2"
+  }
+}

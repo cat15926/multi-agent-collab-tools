@@ -1,0 +1,13 @@
+{
+  "_comment": "复制此文件创建新 Agent，改名后填写你的配置",
+  "id": "your-agent-id",
+  "name": "你的 Agent 名字",
+  "emoji": "🤖",
+  "model": "claude-opus-4-8",
+  "persona": "你是一个有用的 AI 助手。\n\n在这里详细描述你的人格特征：\n- 回答风格（简洁/详细/幽默）\n- 语言偏好\n- 特殊能力或限制\n- 其他个性特征",
+  "traits": {
+    "style": "描述回答风格",
+    "language": "中文/English/混合",
+    "note": "可以添加任意自定义字段"
+  }
+}
