@@ -9,8 +9,7 @@
 | 0 | 地基与心智地图（5 抽象 + 架构图） | ✅ 完成 | [phase-00](./phase-00-foundation.md) |
 | 1 | 单 Agent 能说话（MVP） | ✅ 完成 | [phase-01](./phase-01-single-agent.md) |
 | 2 | Agent 身份与记忆 | ✅ 完成 | [phase-02](./phase-02-agent-identity-memory.md) |
-| 3 | 多 Agent + 消息路由 | ⬜ 待办 | — |
-| 3 | 多 Agent + 消息路由 | ⬜ 待办 | — |
+| 3 | 多 Agent + 消息路由 | ✅ 完成 | [phase-03](./phase-03-multi-agent-routing.md) |
 | 4 | Agent 间协作 A2A | ⬜ 待办 | — |
 | 5 | 协作模式 Pattern（系统灵魂） | ⬜ 待办 | — |
 | 6 | 工具调用（给 Agent 装手） | ⬜ 待办 | — |
