@@ -44,5 +44,6 @@
 | [ADR-002](./002-agent-config-format.md) | Agent 配置文件格式设计 | 2 | 2025-07-31 | ✅ accepted |
 | [ADR-003](./003-sqlite-schema.md) | SQLite 存储架构设计 | 2 | 2025-07-31 | ✅ accepted |
 | [ADR-004](./004-fix-p4-001-a2a-single-hop.md) | P4-001 A2A 协作只能单跳问题修复 | 4 | 2026-08-07 | ✅ accepted |
+| [ADR-005](./005-fix-p4-002-a2a-replies-not-displayed.md) | P4-002 被委派 Agent 的回复不显示问题修复 | 4 | 2026-08-07 | ✅ accepted |
 
 > **注**：ADR-001 未单独成文，已在 Phase 1 代码和文档中说明：为什么用官方 SDK 直连而非框架（学习期手写更好理解原理）。

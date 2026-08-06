@@ -180,6 +180,19 @@ async function main() {
         const targetName = target ? target.name : chain.targetAgentId;
         console.log(`  • ${sourceName} → ${targetName}`);
       }
+
+      // 打印每跳 Agent 的回复（P4-002 修复）
+      if (result.a2aReplies && result.a2aReplies.length > 0) {
+        for (const reply of result.a2aReplies) {
+          const agentConfig = registry.get(reply.agentId);
+          const emoji = agentConfig?.emoji ?? "🤖";
+          const name = agentConfig?.name ?? reply.agentId;
+          console.log(`\n  ↪️ ${emoji} ${name}:`);
+          // 缩进打印回复内容
+          const indentedContent = reply.content.split('\n').map(line => `  ${line}`).join('\n');
+          console.log(indentedContent);
+        }
+      }
     }
 
     // 显示 A2A 模式
