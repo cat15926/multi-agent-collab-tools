@@ -6,6 +6,7 @@
  * - 记录协作链
  * - 执行协作决策
  * - 管理协作深度
+ * - 支持多跳链式协作（修复 P4-001）
  */
 
 import type { AgentRegistry } from "../registry/agent-registry.js";
@@ -13,8 +14,9 @@ import type { ThreadManager } from "../thread/manager.js";
 import type { Storage, Message } from "../storage/sqlite.js";
 import type { Agent } from "../agent/agent.js";
 import type { A2AConfig, DecisionResult } from "./decider.js";
-import { A2ADecision } from "./decider.js";
+import { A2ADecider, A2ADecision } from "./decider.js";
 import type { A2AParseResult } from "./parser.js";
+import { A2AParser } from "./parser.js";
 
 /** A2A 上下文 */
 export interface A2AContext {
@@ -32,85 +34,109 @@ export interface A2AContext {
   participants: string[];
 }
 
-/** A2A 处理结果 */
+/** A2A 处理结果（修复后） */
 export interface A2AResult {
   /** 是否继续协作 */
   continued: boolean;
-  /** 触发的下一个 Agent ID 列表 */
-  nextAgentIds?: string[];
+  /** 完成的协作跳数 */
+  hopsCompleted: number;
   /** 协作链记录 */
-  chains?: {
+  chains: {
     sourceAgentId: string;
     targetAgentId: string;
   }[];
+  /** 每跳的回复（用于返回给用户） */
+  replies: {
+    agentId: string;
+    content: string;
+  }[];
   /** 决策结果 */
-  decision: DecisionResult;
+  finalDecision: DecisionResult;
 }
 
 export class A2AHandler {
+  private a2aParser: A2AParser;
+  private availableIds: Set<string>;
+
   constructor(
     private registry: AgentRegistry,
     private threads: ThreadManager,
     private storage: Storage,
     private config: A2AConfig
-  ) {}
+  ) {
+    this.a2aParser = new A2AParser();
+    this.availableIds = new Set(this.registry.listIds());
+  }
 
   /**
-   * 处理 A2A 协作
+   * 处理 A2A 协作（修复：支持多跳）
    * @param sourceAgentId 发起协作的 Agent
-   * @param parseResult A2A 解析结果
+   * @param sourceReply 发起协作的 Agent 的回复内容
    * @param context A2A 上下文
    * @param agentFactory Agent 工厂函数
    */
   async handle(
     sourceAgentId: string,
-    parseResult: A2AParseResult,
+    sourceReply: string,
     context: A2AContext,
     agentFactory: (agentId: string) => Agent
   ): Promise<A2AResult> {
-    // 1. 创建决策器并决策
-    const { A2ADecider } = await import("./decider.js");
-    const decider = new A2ADecider();
-    const decision = decider.decide({
-      mentions: parseResult.mentions,
-      depth: context.depth,
-      shouldTrigger: parseResult.shouldTrigger,
-      config: this.config,
-    });
-
-    // 2. 如果决策是停止，直接返回
-    if (decision.decision === A2ADecision.STOP) {
-      return {
-        continued: false,
-        decision,
-      };
-    }
-
-    // 3. 如果决策是确认，返回等待用户确认
-    if (decision.decision === A2ADecision.CONFIRM) {
-      return {
-        continued: false,
-        nextAgentIds: decision.targets,
-        decision,
-      };
-    }
-
-    // 4. 决策是继续，执行协作
     const chains: { sourceAgentId: string; targetAgentId: string }[] = [];
-    const nextAgentIds = decision.targets || [];
+    const replies: { agentId: string; content: string }[] = [];
 
-    // 5. 记录协作链
-    for (const targetAgentId of nextAgentIds) {
-      // 先确保 Agent 在数据库中存在
-      const agentConfig = this.registry.get(targetAgentId);
+    // 初始状态
+    let currentAgentId = sourceAgentId;
+    let currentReply = sourceReply;
+    let currentDepth = context.depth;
+    let currentHistory = [...context.history];
+
+    // 多跳循环
+    while (currentDepth < this.config.maxDepth) {
+      // 1. 解析当前 Agent 回复中的 @mention
+      const parseResult = this.a2aParser.parse(currentReply, this.availableIds);
+
+      // 2. 决策是否继续
+      const { A2ADecider } = await import("./decider.js");
+      const decider = new A2ADecider();
+      const decision = decider.decide({
+        mentions: parseResult.mentions,
+        depth: currentDepth,
+        shouldTrigger: parseResult.shouldTrigger,
+        config: this.config,
+      });
+
+      // 3. 如果决策是停止或确认，退出循环
+      if (decision.decision === A2ADecision.STOP ||
+          decision.decision === A2ADecision.CONFIRM) {
+        return {
+          continued: false,
+          hopsCompleted: chains.length,
+          chains,
+          replies,
+          finalDecision: decision,
+        };
+      }
+
+      // 4. 获取目标 Agent
+      const nextAgentIds = decision.targets || [];
+      if (nextAgentIds.length === 0) {
+        break;
+      }
+
+      // 5. 只处理第一个目标（Phase 4 简化）
+      const nextAgentId = nextAgentIds[0];
+
+      // 6. 确保 Agent 在数据库中存在
+      const agentConfig = this.registry.get(nextAgentId);
       if (agentConfig) {
         this.storage.upsertAgent(agentConfig);
       }
 
+      // 7. 记录协作链
       const chain = this.storage.addA2AChain({
         threadId: context.threadId,
-        sourceAgentId,
-        targetAgentId,
+        sourceAgentId: currentAgentId,
+        targetAgentId: nextAgentId,
         triggerMessageId: context.triggerMessageId,
       });
       chains.push({
@@ -118,52 +144,61 @@ export class A2AHandler {
         targetAgentId: chain.targetAgentId,
       });
 
-      // 添加目标 Agent 到会话参与者
-      await this.threads.addParticipant(context.threadId, targetAgentId);
-    }
+      // 8. 添加目标 Agent 到会话参与者
+      await this.threads.addParticipant(context.threadId, nextAgentId);
 
-    // 6. 唤醒下一个 Agent（简化版：只唤醒第一个）
-    // Phase 5 可以支持并行唤醒多个 Agent
-    if (nextAgentIds.length > 0) {
-      const nextAgentId = nextAgentIds[0];
+      // 9. 唤醒下一个 Agent
       const nextAgent = agentFactory(nextAgentId);
 
-      // 构建新的上下文
-      const newContext: A2AContext = {
-        ...context,
-        sourceAgentId: nextAgentId,
-        depth: context.depth + 1,
-      };
-
-      // 获取目标 Agent 的回复
-      // 注意：这里需要从原始消息中提取"真正的内容"（移除 @mention）
-      const triggerMessage = context.history.find(
-        (m) => m.id === context.triggerMessageId
-      );
-      const content = triggerMessage?.content || "";
-
-      const reply = await nextAgent.reply(content, {
+      // 10. 构建上下文
+      const agentReply = await nextAgent.reply(currentReply, {
         threadId: context.threadId,
-        participants: context.participants,
-        history: context.history,
+        participants: [...context.participants, nextAgentId],
+        history: currentHistory,
         hasMention: true,
       });
 
-      // 存储下一个 Agent 的回复
+      // 11. 存储 Agent 回复
       this.storage.addMessage({
         conversationId: context.threadId,
         role: "assistant",
         agentId: nextAgentId,
-        content: reply,
-        a2aSource: sourceAgentId,
+        content: agentReply,
+        a2aSource: currentAgentId,
       });
+
+      // 12. 记录回复（用于返回给用户）
+      replies.push({
+        agentId: nextAgentId,
+        content: agentReply,
+      });
+
+      // 13. 更新状态，准备下一跳
+      currentAgentId = nextAgentId;
+      currentReply = agentReply;
+      currentDepth++;
+
+      // 14. 更新历史（加入当前回复）
+      currentHistory = [...currentHistory, {
+        id: `temp-${Date.now()}`,
+        conversationId: context.threadId,
+        role: "assistant",
+        agentId: nextAgentId,
+        content: agentReply,
+        createdAt: Math.floor(Date.now() / 1000),
+      }];
     }
 
+    // 循环结束（达到 maxDepth 或没有更多 mentions）
     return {
       continued: true,
-      nextAgentIds,
+      hopsCompleted: chains.length,
       chains,
-      decision,
+      replies,
+      finalDecision: {
+        decision: A2ADecision.STOP,
+        reason: `达到最大协作深度 (${this.config.maxDepth}) 或没有更多 mentions`,
+      },
     };
   }
 

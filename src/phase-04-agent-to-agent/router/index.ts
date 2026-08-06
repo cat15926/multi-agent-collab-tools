@@ -12,7 +12,7 @@ import { AgentRegistry } from "../registry/agent-registry.js";
 import { ThreadManager } from "../thread/manager.js";
 import type { Storage, Message } from "../storage/sqlite.js";
 import type { Agent } from "../agent/agent.js";
-import { A2ADecider, type A2AConfig } from "../a2a/decider.js";
+import { A2ADecider, A2ADecision, type A2AConfig } from "../a2a/decider.js";
 import { A2AHandler } from "../a2a/handler.js";
 import { A2AParser } from "../a2a/parser.js";
 import type { RouteContext } from "./route-context.js";
@@ -21,6 +21,8 @@ import type { RouteContext } from "./route-context.js";
 export interface RouterOptions {
   /** A2A 配置 */
   a2a?: A2AConfig;
+  /** A2A 初始深度（默认 1，表示第一跳） */
+  initialDepth?: number;
 }
 
 /** 路由结果（Phase 4 扩展） */
@@ -40,6 +42,11 @@ export interface RouteResult {
     sourceAgentId: string;
     targetAgentId: string;
   }[];
+  /** 每跳的回复内容 */
+  a2aReplies?: {
+    agentId: string;
+    content: string;
+  }[];
 }
 
 export class Router {
@@ -47,6 +54,7 @@ export class Router {
   private a2aParser: A2AParser;
   private availableIds: Set<string>;
   private a2aHandler: A2AHandler;
+  private initialDepth: number;
 
   constructor(
     private registry: AgentRegistry,
@@ -57,6 +65,7 @@ export class Router {
     this.mentionParser = new MentionParser();
     this.a2aParser = new A2AParser();
     this.availableIds = new Set(this.registry.listIds());
+    this.initialDepth = options.initialDepth ?? 1;
 
     // 初始化 A2A Handler
     const a2aConfig = this.options.a2a || A2ADecider.defaultConfig();
@@ -150,8 +159,9 @@ export class Router {
       agentId: targetAgentId,
       threadId: thread.id,
       hasMention: targets.length > 0,
-      a2aTriggered: a2aResult.continued,
+      a2aTriggered: a2aResult.hopsCompleted > 0,
       a2aChains: a2aResult.chains,
+      a2aReplies: a2aResult.replies,
     };
   }
 
@@ -170,11 +180,17 @@ export class Router {
     // 1. 解析 Agent 回复中的 @mention
     const parseResult = this.a2aParser.parse(replyContent, this.availableIds);
 
-    // 2. 如果没有触发 A2A，直接返回
+    // 2. 如果没有触发 A2A，直接返回空结果
     if (!parseResult.shouldTrigger || parseResult.mentions.length === 0) {
       return {
         continued: false,
+        hopsCompleted: 0,
         chains: [],
+        replies: [],
+        finalDecision: {
+          decision: A2ADecision.STOP,
+          reason: "没有检测到有效的 A2A 触发条件",
+        },
       };
     }
 
@@ -193,7 +209,7 @@ export class Router {
       threadId,
       sourceAgentId,
       triggerMessageId: messageId,
-      depth: 1,
+      depth: this.initialDepth,
       history: updatedHistory,
       participants,
     };
@@ -201,7 +217,7 @@ export class Router {
     // 5. 执行 A2A
     return this.a2aHandler.handle(
       sourceAgentId,
-      parseResult,
+      replyContent,
       a2aContext,
       agentFactory
     );
