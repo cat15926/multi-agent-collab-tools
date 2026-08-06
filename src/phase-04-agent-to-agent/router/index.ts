@@ -144,13 +144,17 @@ export class Router {
     });
 
     // === Phase 4 新增：A2A 处理 ===
+    // 重新获取完整历史（包含当前轮次的 user 消息和 agent 消息）
+    const completeHistory = this.threads.getHistory(thread.id);
+
     const a2aResult = await this.handleA2A(
       targetAgentId,
       replyContent,
       agentMsg.id,
       thread.id,
-      history,
+      completeHistory,
       thread.participants,
+      cleanContent,  // P4-003: 传递原始用户输入，用于构造委派消息
       agentFactory
     );
 
@@ -166,7 +170,7 @@ export class Router {
   }
 
   /**
-   * 处理 A2A 协作
+   * 处理 A2A 协作（P4-003 修复：传递完整上下文）
    */
   private async handleA2A(
     sourceAgentId: string,
@@ -175,6 +179,7 @@ export class Router {
     threadId: string,
     history: Message[],
     participants: string[],
+    originalUserInput: string,  // P4-003: 原始用户输入
     agentFactory: (agentId: string) => Agent
   ) {
     // 1. 解析 Agent 回复中的 @mention
@@ -194,15 +199,8 @@ export class Router {
       };
     }
 
-    // 3. 构建上下文（更新历史）
-    const updatedHistory = [...history, {
-      id: messageId,
-      conversationId: threadId,
-      role: "assistant" as const,
-      agentId: sourceAgentId,
-      content: replyContent,
-      createdAt: Math.floor(Date.now() / 1000),
-    }];
+    // 3. 构建完整上下文（此时 history 已包含 user 消息和 source agent 的回复）
+    // 不需要再手动添加，因为 history 已经是完整的
 
     // 4. 构建 A2A 上下文
     const a2aContext = {
@@ -210,14 +208,19 @@ export class Router {
       sourceAgentId,
       triggerMessageId: messageId,
       depth: this.initialDepth,
-      history: updatedHistory,
+      history: history,  // P4-003: 使用完整的 history
       participants,
     };
 
-    // 5. 执行 A2A
+    // 5. 构造委派消息（P4-003: 不重复使用 source reply）
+    const sourceAgent = this.registry.get(sourceAgentId);
+    const sourceName = sourceAgent ? sourceAgent.name : sourceAgentId;
+    const delegationMessage = `(由 @${sourceName} 转交)\n\n用户原始问题：${originalUserInput}\n\n@${sourceName} 的回复：\n${replyContent}`;
+
+    // 6. 执行 A2A
     return this.a2aHandler.handle(
       sourceAgentId,
-      replyContent,
+      delegationMessage,  // P4-003: 传递委派消息而非原始回复
       a2aContext,
       agentFactory
     );

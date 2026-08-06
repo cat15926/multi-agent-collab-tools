@@ -123,8 +123,14 @@ export class A2AHandler {
         break;
       }
 
-      // 5. 只处理第一个目标（Phase 4 简化）
-      const nextAgentId = nextAgentIds[0];
+      // 5. 过滤掉 self-loops（防止 Agent @自己）
+      const validTargets = nextAgentIds.filter(id => id !== currentAgentId);
+      if (validTargets.length === 0) {
+        break; // 没有有效目标，退出循环
+      }
+
+      // 6. 只处理第一个目标（Phase 4 简化）
+      const nextAgentId = validTargets[0];
 
       // 6. 确保 Agent 在数据库中存在
       const agentConfig = this.registry.get(nextAgentId);
