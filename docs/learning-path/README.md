@@ -11,7 +11,7 @@
 | 2 | Agent 身份与记忆 | ✅ 完成 | [phase-02](./phase-02-agent-identity-memory.md) |
 | 3 | 多 Agent + 消息路由 | ✅ 完成 | [phase-03](./phase-03-multi-agent-routing.md) |
 | 4 | Agent 间协作 A2A | ✅ 完成 | [phase-04](./phase-04-agent-to-agent-collaboration.md) |
-| 5 | 协作模式 Pattern（系统灵魂） | ⬜ 待办 | — |
+| 5 | 协作模式 Pattern（系统灵魂） | ✅ 完成 | [phase-05](./phase-05-collaboration-patterns.md) |
 | 6 | 工具调用（给 Agent 装手） | ⬜ 待办 | — |
 | 7 | 共享记忆与知识库 | ⬜ 待办 | — |
 | 8 | 可观测性 | ⬜ 待办 | — |

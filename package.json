@@ -12,6 +12,7 @@
     "phase2": "tsx src/phase-02-agent-identity/cli.ts",
     "phase3": "tsx src/phase-03-multi-agent/cli.ts",
     "phase4": "tsx src/phase-04-agent-to-agent/cli.ts",
+    "phase5": "tsx src/phase-05-patterns/cli.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

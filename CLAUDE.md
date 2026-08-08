@@ -10,18 +10,35 @@ Reference implementation: [Clowder AI](https://github.com/zts212653/clowder-ai) 
 
 ## Development Commands
 
+> Scripts run via `npm run <phase>` (or `pnpm <phase>` — the committed lockfile is `pnpm-lock.yaml`; pnpm does not need the `--` separator that npm requires to pass args). `tsx` runs TypeScript directly, so there is **no build step** (`npm run build` does not exist).
+
 ```bash
 # Run each phase's CLI
 npm run phase1    # Phase 1: Single Agent MVP
 npm run phase2    # Phase 2: Agent Identity & Memory
 npm run phase3    # Phase 3: Multi-Agent + Message Routing
 npm run phase4    # Phase 4: Agent-to-Agent Collaboration
+npm run phase5    # Phase 5: Collaboration Patterns
+
+# Phase 4 CLI options (emergent A2A)
+npm run phase4 -- --list                    # List all available agents
+npm run phase4 -- "@alice 你好"             # Chat with agent
+npm run phase4 -- "@alice @bob 讨论"        # A2A collaboration
+npm run phase4 -- --thread=xxx "继续"       # Continue specific thread
+npm run phase4 -- --no-a2a "@alice 设计"     # Disable A2A
+npm run phase4 -- --a2a-mode=confirm "@alice 设计"  # Confirmation mode
+npm run phase4 -- --chain --thread=xxx      # View collaboration chain
+
+# Phase 5 CLI options (structured orchestration)
+npm run phase5 -- --list-patterns                          # List available patterns
+npm run phase5 -- "@alice 写个登录函数" --pattern=pipeline --agents=alice,bob,carol
+npm run phase5 -- "设计登录页" --pattern=parallel --agents=alice,bob,carol --aggregator=dave
+npm run phase5 -- "方案可行吗" --pattern=debate --agents=alice,bob --rounds=3
+npm run phase5 -- "实现用户系统" --pattern=hierarchy --manager=alice --workers=bob,carol
+npm run phase5 -- --thread=xxx --show-workflow             # Inspect execution steps/timings
 
 # Type checking (recommended before commits)
 npm run typecheck
-
-# Build
-npm run build
 ```
 
 ## Tech Stack
@@ -30,6 +47,11 @@ npm run build
 - **Direct LLM SDKs**: `@anthropic-ai/sdk` (no frameworks during learning phase)
 - **Storage**: SQLite via `better-sqlite3`
 - **Runtime**: `tsx` for direct TypeScript execution
+
+### Environment & Storage
+
+- **API key**: The Anthropic client is constructed bare (`new Anthropic()`, no args), so `ANTHROPIC_API_KEY` **must be set in the environment**. The code does not load `.env` — export it in your shell. Set `ANTHROPIC_BASE_URL` too if your `config/agents/*.json` `model` values route through a relay/proxy.
+- **Database location**: All phases share `~/.multi-agent-collab-tools/memory.db` (under `$HOME`, gitignored). Phase 5 extends the same DB with `workflow_executions` + `workflow_steps` tables.
 
 ## Architecture: The 5 Core Abstractions
 
@@ -59,7 +81,11 @@ Each phase implements one core abstraction. Understanding these is crucial:
 
 Layers 1-5 are deterministic code; Layer 6 is the Agent's LLM.
 
+**A2A Handoff** (Phase 4): Agents can delegate to each other. When Agent A detects a task belongs to Agent B, they use `@handoff @b context...` syntax. The A2A system parses, validates, and routes the handoff message.
+
 **Hard Rails + Soft Power**: Safety rails are non-negotiable floors; above that, agents self-coordinate.
+
+**Patterns & Orchestrator (Phase 5)**: Where Phase 4 collaboration is *emergent* (agents spontaneously `@handoff`), Phase 5 is *structured*. A `Pattern` is a pluggable interface; `BasePattern` provides a validate → execute → record template method and owns ball-flow. The `Orchestrator` looks up patterns in the `globalPatternRegistry`, builds a `PatternContext` (task + agents + threadId + config + history), runs the pattern, and persists each run via `WorkflowTracker` into `workflow_executions`/`workflow_steps`. Four built-in patterns: `pipeline` (linear A→B→C), `parallel` (fan-out → aggregator), `debate` (A↔B, exactly 2 agents, N rounds), `hierarchy` (manager decomposes → workers → manager merges). Patterns and A2A are orthogonal and composable (`config.a2aEnabled`).
 
 ## Source Structure
 
@@ -74,9 +100,19 @@ src/
 │   ├── router/                  # 6-layer routing pipeline
 │   ├── thread/                  # Thread management
 │   └── registry/                # Agent registry
-└── phase-04-agent-to-agent/     # A2A collaboration
-    ├── a2a/                     # A2A parser, decider, handler
-    └── router/                  # Enhanced routing with A2A
+├── phase-04-agent-to-agent/     # A2A collaboration (emergent, agent-driven)
+│   ├── a2a/                     # A2A parser, decider, handler
+│   ├── router/                  # Enhanced routing with A2A
+│   ├── agent/                   # Agent class with handoff capability
+│   ├── thread/                  # Thread with collaboration chain
+│   ├── registry/                # Agent registry
+│   └── storage/                 # SQLite with messages + threads
+└── phase-05-patterns/           # Structured collaboration patterns (Pattern + Orchestrator)
+    ├── pattern/                 # Pattern interface, BasePattern (template method), registry
+    ├── patterns/                # pipeline / parallel / debate / hierarchy implementations
+    ├── orchestrator/            # Orchestrator + WorkflowTracker (executes & persists runs)
+    ├── agent/ router/ thread/ registry/ a2a/   # reuse Phase 4 components
+    └── storage/                 # SQLite: adds workflow_executions + workflow_steps tables
 ```
 
 ## Agent Configuration
@@ -89,6 +125,31 @@ Agents are defined as JSON in `config/agents/`:
 - `traits`: Additional metadata
 
 Example: `ji-tui.json` (the default agent "🍗 鸡腿")
+
+## Documentation Structure
+
+```
+docs/
+├── learning-path/
+│   ├── README.md               # Phase overview + progress
+│   ├── phase-00-foundation.md  # Foundation + 5 abstractions
+│   ├── phase-01-single-agent.md
+│   ├── phase-02-agent-identity-memory.md
+│   ├── phase-03-multi-agent-routing.md
+│   └── phase-04-agent-to-agent-collaboration.md
+├── architecture/
+│   └── core-abstractions.md    # Deep dive into 5 abstractions
+└── decisions/                   # ADRs + bug-fix retrospectives (one decision per file)
+    ├── _template.md             # ADR template (NNNN-short-desc.md)
+    ├── _template-bugfix.md      # bug-fix postmortem template (e.g. 004/005/006 = P4 fixes)
+    ├── 002-agent-config-format.md
+    └── 003-sqlite-schema.md
+```
+
+Truth sources:
+- **Phase behavior/spec** → `docs/learning-path/phase-XX-*.md`
+- **Architecture theory** → `docs/architecture/core-abstractions.md`
+- **Design decisions** → `docs/decisions/`
 
 ## Key Design Principles
 
@@ -107,6 +168,13 @@ Example: `ji-tui.json` (the default agent "🍗 鸡腿")
 
 ## Current Progress
 
-Phases 0-4 complete. Phase 5 (Collaboration Patterns) is next.
+Phases 0-5 complete. Phase 6 (Tools / function calling) is next.
 
-See `docs/learning-path/README.md` for full roadmap, `docs/architecture/core-abstractions.md` for deep architectural theory.
+See `docs/learning-path/README.md` for the full roadmap and `docs/architecture/core-abstractions.md` for architectural theory.
+
+## Reference Implementation
+
+When stuck on how to implement something, refer to Clowder AI at `~/lhz/clowder-ai`:
+- Clowder `packages/api/src/` → production implementations
+- This project's `docs/architecture/core-abstractions.md` → theory
+- This project's `docs/decisions/` → why specific design choices were made
