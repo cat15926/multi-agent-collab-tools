@@ -20,3 +20,4 @@ dist/
 
 # OS
 Thumbs.DB
+.claude/settings.local.json
