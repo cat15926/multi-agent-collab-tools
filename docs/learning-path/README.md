@@ -12,7 +12,7 @@
 | 3 | 多 Agent + 消息路由 | ✅ 完成 | [phase-03](./phase-03-multi-agent-routing.md) |
 | 4 | Agent 间协作 A2A | ✅ 完成 | [phase-04](./phase-04-agent-to-agent-collaboration.md) |
 | 5 | 协作模式 Pattern（系统灵魂） | ✅ 完成 | [phase-05](./phase-05-collaboration-patterns.md) |
-| 6 | 工具调用（给 Agent 装手） | ⬜ 待办 | — |
+| 6 | 工具调用（给 Agent 装手） | ✅ 完成 | [phase-06](./phase-06-tools.md) |
 | 7 | 共享记忆与知识库 | ⬜ 待办 | — |
 | 8 | 可观测性 | ⬜ 待办 | — |
 | 9 | Web UI 与产品化（按需） | ⬜ 待办 | — |
@@ -48,6 +48,7 @@ Agent 互相委派任务。产出：alice 写完代码 → 自动请 bob review�
 
 ### Phase 6 — 工具调用（4-5 天）
 Agent 能读文件、跑命令、搜索。技术点：function calling、工具注册表、**安全沙箱**。
+→ [详细文档](./phase-06-tools.md)
 
 ### Phase 7 — 共享记忆与知识库（5-7 天）
 Agent 间共享长期记忆（决策、经验、证据）。技术点：共享状态、(可选)向量检索。

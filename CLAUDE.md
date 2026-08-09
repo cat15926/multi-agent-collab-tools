@@ -168,7 +168,9 @@ Truth sources:
 
 ## Current Progress
 
-Phases 0-5 complete. Phase 6 (Tools / function calling) is next.
+Phases 0-6 complete. Phase 7 (Shared Memory / KnowledgeBase) is next.
+
+Phase 6 added **tool use** (Anthropic function calling): `Agent.reply` runs a multi-turn `tool_use → execute → tool_result` loop; a `ToolRegistry` + per-Agent `tools` whitelist gate 5 builtin tools (`read_file`/`write_file`/`list_files`/`search_files`/`run_command`); a multi-layer `Sandbox` (path-escape incl. symlink following, command whitelist, forbidden patterns, metachar rejection, `--allow-write`/`--allow-exec` authorization) is the Hard-Rails floor. Tools are orthogonal to Patterns (the loop lives inside `reply`). New table `tool_calls` (ms timestamps). CLI: `npm run phase6 -- --list-tools`, `@agent 读 package.json`, `--show-tools` replay.
 
 See `docs/learning-path/README.md` for the full roadmap and `docs/architecture/core-abstractions.md` for architectural theory.
 

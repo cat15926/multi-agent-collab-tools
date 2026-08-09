@@ -13,6 +13,7 @@
     "phase3": "tsx src/phase-03-multi-agent/cli.ts",
     "phase4": "tsx src/phase-04-agent-to-agent/cli.ts",
     "phase5": "tsx src/phase-05-patterns/cli.ts",
+    "phase6": "tsx src/phase-06-tools/cli.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
