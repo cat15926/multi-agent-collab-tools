@@ -4,7 +4,7 @@
  * 负责 Pattern 的调度和执行管理
  */
 
-import type { Pattern, PatternContext, PatternResult, PatternConfig } from "../pattern/index.js";
+import type { Pattern, PatternContext, PatternResult, PatternConfig, PatternEvents } from "../pattern/index.js";
 import type { Agent } from "../agent/agent.js";
 import type { Storage } from "../storage/sqlite.js";
 import { PatternRegistry, globalPatternRegistry } from "../pattern/registry.js";
@@ -50,8 +50,9 @@ export class Orchestrator {
     agents: Agent[];
     threadId: string;
     config?: PatternConfig;
+    events?: PatternEvents;
   }): Promise<PatternResult> {
-    const { patternName, task, agents, threadId, config = {} } = params;
+    const { patternName, task, agents, threadId, config = {}, events } = params;
 
     // 1. 查找 Pattern
     const pattern = this.registry.get(patternName);
@@ -92,6 +93,7 @@ export class Orchestrator {
           patternName,
         },
         history: await this.loadHistory(threadId),
+        events,
       };
 
       // 7. 执行 Pattern

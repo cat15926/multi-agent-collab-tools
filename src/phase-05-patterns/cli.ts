@@ -24,6 +24,7 @@ import { Storage } from "./storage/sqlite.js";
 import { Agent } from "./agent/agent.js";
 import { Orchestrator } from "./orchestrator/index.js";
 import { globalPatternRegistry, type PatternConfig } from "./pattern/registry.js";
+import type { PatternEvents } from "./pattern/index.js";
 import { PipelinePattern } from "./patterns/pipeline.js";
 import { ParallelPattern } from "./patterns/parallel.js";
 import { DebatePattern } from "./patterns/debate.js";
@@ -361,14 +362,30 @@ async function main() {
   console.log(`会话 ID: ${threadId}`);
   console.log(`参与 Agent: ${agentIds.join(", ")}\n`);
 
+  // 实时输出事件：每个 Agent 一轮完成（或开始）即打印，不再等全部结束
+  const events: PatternEvents = {
+    onStepStart: ({ stepNumber, agentId }) => {
+      console.log(`\n──── Step ${stepNumber} · @${agentId} ────`);
+    },
+    onStepComplete: ({ agentId, output, success, duration, error }) => {
+      if (success) {
+        console.log(`\n${output}`);
+        console.log(`  ✓ @${agentId} · ${duration}ms\n`);
+      } else {
+        console.log(`  ✗ @${agentId} 失败 · ${error}\n`);
+      }
+    },
+  };
+
   try {
-    // 执行 Pattern
+    // 执行 Pattern（执行期间通过 events 实时输出每一步）
     const result = await orchestrator.executePattern({
       patternName: args.patternName,
       task: args.input,
       agents,
       threadId,
       config,
+      events,
     });
 
     // 存储最终输出
@@ -379,22 +396,12 @@ async function main() {
       agentId: agentIds[agentIds.length - 1], // 最后一个 Agent
     });
 
-    // 显示结果
+    // 显示结果（每步已在执行期间实时输出，此处仅打印汇总）
     console.log(`\n${"=".repeat(60)}`);
     console.log(`执行结果: ${result.success ? "成功" : "失败"}`);
     console.log(`执行步骤: ${result.steps.length}`);
     console.log(`总耗时: ${result.metadata.duration}ms`);
     console.log(`${"=".repeat(60)}\n`);
-
-    for (const step of result.steps) {
-      const status = step.success ? "✓" : "✗";
-      console.log(`${status} Step ${step.stepNumber}: ${step.agentId} (${step.duration}ms)`);
-      if (step.success) {
-        console.log(`\n${step.output}\n`);
-      } else {
-        console.log(`  错误: ${step.error}\n`);
-      }
-    }
 
     if (!result.success) {
       console.error(`执行失败: ${result.failureReason}`);

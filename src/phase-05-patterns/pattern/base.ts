@@ -116,6 +116,9 @@ export abstract class BasePattern implements Pattern {
     stepNumber: number
   ): Promise<PatternStep> {
     const startTime = Date.now();
+    const events = context.events;
+
+    events?.onStepStart?.({ stepNumber, agentId: agent.id, input });
 
     try {
       // 调用 Agent
@@ -127,10 +130,14 @@ export abstract class BasePattern implements Pattern {
       });
 
       const duration = Date.now() - startTime;
+      events?.onStepComplete?.({ stepNumber, agentId: agent.id, output, success: true, duration });
 
       return createPatternStep(stepNumber, agent.id, input, output, duration, true);
     } catch (error) {
       const duration = Date.now() - startTime;
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      events?.onStepComplete?.({ stepNumber, agentId: agent.id, output: "", success: false, duration, error: errorMsg });
+
       return createPatternStep(
         stepNumber,
         agent.id,
