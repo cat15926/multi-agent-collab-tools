@@ -86,7 +86,7 @@ export class HierarchyPattern extends BasePattern {
     }
 
     // 解析任务分解结果
-    const decomposition = this.parseDecomposition(decompositionStep.output, workers);
+    const decomposition = this.parseDecomposition(decompositionStep.output, workers, result);
 
     if (decomposition.tasks.length === 0) {
       result.failureReason = "管理者未生成有效的任务分解";
@@ -147,41 +147,69 @@ export class HierarchyPattern extends BasePattern {
       input += `\n## 分解要求\n${config.decompositionPrompt}\n`;
     }
 
-    input += `\n请按以下格式输出：\n`;
-    input += `1. @workerName: 任务描述\n`;
-    input += `2. @workerName: 任务描述\n`;
-    input += `...\n\n`;
+    input += `\n请**严格**按以下格式输出任务分配（每行一个标签，不要加粗、不要列表符号）：\n`;
+    input += `<task agent="workerName">任务描述</task>\n`;
+    input += `<task agent="workerName">任务描述</task>\n`;
+    input += `（workerName 必须是上面列出的 @id）\n\n`;
 
     return input;
   }
 
   /**
-   * 解析任务分解结果
+   * 解析任务分解结果（修复 P5-001）
+   *
+   * 两级解析：
+   * 1. 结构化标签（治本）：`<task agent="bob">任务</task>` —— 提示词明确要求此格式
+   * 2. 容错正则（兜底）：剥离 markdown 装饰后匹配 `@worker: 任务`，兼容全角冒号
+   * 全部失败 → 兜底广播全量任务，但**显形**（console.warn + metadata 标记），不再静默
    */
-  private parseDecomposition(output: string, workers: Agent[]): TaskDecomposition {
+  private parseDecomposition(
+    output: string,
+    workers: Agent[],
+    result: PatternResult
+  ): TaskDecomposition {
     const tasks: TaskDecomposition["tasks"] = [];
     const workerIds = workers.map((w) => w.id);
 
-    // 简化解析：查找 @workerName: task pattern
-    const lines = output.split("\n");
-    const pattern = /@([\w-]+):\s*(.+)/;
+    // 一级：结构化标签 <task agent="bob">任务</task>
+    const tagPattern = /<task\s+agent=["']([\w-]+)["']\s*>\s*([\s\S]*?)\s*<\/task>/g;
+    for (const m of output.matchAll(tagPattern)) {
+      const [, workerId, description] = m;
+      if (workerIds.includes(workerId)) {
+        tasks.push({
+          id: `task-${tasks.length + 1}`,
+          description: description.trim(),
+          assignedTo: workerId,
+        });
+      }
+    }
 
-    for (const line of lines) {
-      const match = line.match(pattern);
-      if (match) {
-        const [, workerId, description] = match;
-        if (workerIds.includes(workerId)) {
-          tasks.push({
-            id: `task-${tasks.length + 1}`,
-            description: description.trim(),
-            assignedTo: workerId,
-          });
+    // 二级：容错正则（标签缺失时）— 剥离 markdown 装饰 + 兼容全角冒号
+    if (tasks.length === 0) {
+      const linePattern = /@([\w-]+)\s*[:：]\s*(.+)/;
+      for (const line of output.split("\n")) {
+        const cleaned = line.replace(/\*\*|__|\*|_/g, "");
+        const match = cleaned.match(linePattern);
+        if (match) {
+          const [, workerId, description] = match;
+          if (workerIds.includes(workerId)) {
+            tasks.push({
+              id: `task-${tasks.length + 1}`,
+              description: description.trim(),
+              assignedTo: workerId,
+            });
+          }
         }
       }
     }
 
-    // 如果解析失败，为每个工作者分配相同任务
+    // 兜底：广播全量任务（保命，但必须显形 — 修复 P5-001 的静默问题）
     if (tasks.length === 0) {
+      console.warn(
+        `[hierarchy] ⚠️ 任务拆解解析失败（未识别到标签或 @worker: 格式），触发兜底：` +
+          `所有工作者将收到完整任务。请检查管理者输出格式。`
+      );
+      result.metadata.decompositionFallback = true;
       for (const worker of workers) {
         tasks.push({
           id: `task-${tasks.length + 1}`,

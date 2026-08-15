@@ -56,6 +56,8 @@ export interface PatternMetadata {
   agents: string[];
   /** 配置快照 */
   config: Record<string, unknown>;
+  /** hierarchy 兜底标记：拆解解析失败时为 true，所有 worker 收到全量任务（修复 P5-001 可观测性） */
+  decompositionFallback?: boolean;
 }
 
 /** 创建空的 PatternResult（用于初始化） */
