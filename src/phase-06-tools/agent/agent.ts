@@ -101,29 +101,28 @@ export class Agent {
     const effectiveRegistry = this.toolRegistry?.forAgent(this.allowedTools);
     const tools = effectiveRegistry?.toAnthropicTools() ?? [];
 
+    // 投影一次，两条路径复用（修复 P4-004：归属标注 + 相邻同角色合并）
+    const llmMessages = [...this.toLlmMessages(contextMessages), { role: "user" as const, content }];
+
     // 无工具 → 原单次调用逻辑（向后兼容）
     if (tools.length === 0) {
-      return this.replyWithoutTools(content, contextMessages, systemPrompt);
+      return this.replyWithoutTools(llmMessages, systemPrompt);
     }
 
     // 有工具 → tool-use loop
-    return this.replyWithTools(content, contextMessages, systemPrompt, tools, options);
+    return this.replyWithTools(llmMessages, systemPrompt, tools, options);
   }
 
   /** 无工具：单次调用（Phase 5 原逻辑） */
   private async replyWithoutTools(
-    content: string,
-    contextMessages: Message[],
+    llmMessages: Anthropic.Messages.MessageParam[],
     systemPrompt: string
   ): Promise<string> {
     const response = await this.client.messages.create({
       model: this.model,
       max_tokens: MAX_TOKENS,
       system: systemPrompt,
-      messages: [
-        ...contextMessages.map((m) => ({ role: m.role, content: m.content })),
-        { role: "user", content },
-      ],
+      messages: llmMessages,
     });
     const textBlock = response.content.find((b) => b.type === "text");
     if (!textBlock || textBlock.type !== "text") {
@@ -134,16 +133,12 @@ export class Agent {
 
   /** 有工具：tool-use loop（Phase 6 核心） */
   private async replyWithTools(
-    content: string,
-    contextMessages: Message[],
+    llmMessages: Anthropic.Messages.MessageParam[],
     systemPrompt: string,
     tools: Anthropic.Messages.Tool[],
     options: AgentReplyOptions
   ): Promise<string> {
-    const messages: Anthropic.Messages.MessageParam[] = [
-      ...contextMessages.map((m) => ({ role: m.role, content: m.content })),
-      { role: "user", content },
-    ];
+    const messages: Anthropic.Messages.MessageParam[] = [...llmMessages];
 
     let lastResponse: Anthropic.Messages.Message | undefined;
 
@@ -241,6 +236,29 @@ export class Agent {
   }
 
   /**
+   * 投影：Message[] → LLM messages（修复 P4-004，与 Phase 4/5 一致）
+   *
+   * 1) 归属标注：assistant 消息若非本 Agent 所说，content 前加 `[agentId]:` 前缀。
+   * 2) 相邻同角色合并：满足 Anthropic API user/assistant 严格交替约束
+   *    （多 Agent 连续发言 / A2A 多跳会产生相邻 assistant）。
+   */
+  private toLlmMessages(messages: Message[]): { role: "user" | "assistant"; content: string }[] {
+    return messages.reduce<{ role: "user" | "assistant"; content: string }[]>((acc, m) => {
+      let content = m.content;
+      if (m.role === "assistant" && m.agentId && m.agentId !== this.id) {
+        content = `[${m.agentId}]: ${m.content}`;
+      }
+      const prev = acc[acc.length - 1];
+      if (prev && prev.role === m.role) {
+        prev.content += `\n\n${content}`; // 相邻同角色 → 合并
+      } else {
+        acc.push({ role: m.role, content });
+      }
+      return acc;
+    }, []);
+  }
+
+  /**
    * 构建系统提示（包含身份、参与者、工具提示）
    */
   private buildSystemPrompt(participants: string[]): string {
@@ -259,7 +277,7 @@ export class Agent {
     }
 
     if (participantsInfo) {
-      prompt += `\n\n**当前会话参与者**: 你, ${participantsInfo}\n\n你可以主动 @其他参与者寻求帮助或委派任务。`;
+      prompt += `\n\n**当前会话参与者**: 你, ${participantsInfo}\n\n历史消息中，以 \`[agentId]:\` 开头的 assistant 内容是**其他 Agent** 说的；无前缀的是你自己之前说的话。\n\n你可以主动 @其他参与者寻求帮助或委派任务。`;
     }
 
     return prompt;

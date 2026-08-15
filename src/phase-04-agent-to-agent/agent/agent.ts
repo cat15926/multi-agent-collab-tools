@@ -54,10 +54,7 @@ export class Agent {
       max_tokens: 4096,
       system: systemPrompt,
       messages: [
-        ...contextMessages.map((m) => ({
-          role: m.role as "user" | "assistant",
-          content: m.content,
-        })),
+        ...this.toLlmMessages(contextMessages),
         {
           role: "user",
           content,
@@ -71,6 +68,30 @@ export class Agent {
     }
 
     return textBlock.text;
+  }
+
+  /**
+   * 投影：Message[] → LLM messages（修复 P4-004）
+   *
+   * 1) 归属标注：assistant 消息若非本 Agent 所说，content 前加 `[agentId]:` 前缀，
+   *    让当前 Agent 分清"哪些是自己说的、哪些是别人说的"。
+   * 2) 相邻同角色合并：Anthropic API 要求 user/assistant 严格交替；
+   *    多 Agent 连续发言（A2A 多跳）会产生相邻 assistant，直接合并，避免 API 400。
+   */
+  private toLlmMessages(messages: Message[]): { role: "user" | "assistant"; content: string }[] {
+    return messages.reduce<{ role: "user" | "assistant"; content: string }[]>((acc, m) => {
+      let content = m.content;
+      if (m.role === "assistant" && m.agentId && m.agentId !== this.id) {
+        content = `[${m.agentId}]: ${m.content}`;
+      }
+      const prev = acc[acc.length - 1];
+      if (prev && prev.role === m.role) {
+        prev.content += `\n\n${content}`; // 相邻同角色 → 合并
+      } else {
+        acc.push({ role: m.role, content });
+      }
+      return acc;
+    }, []);
   }
 
   /**
@@ -88,6 +109,8 @@ export class Agent {
       return `${basePrompt}
 
 **当前会话参与者**: 你, ${participantsInfo}
+
+历史消息中，以 \`[agentId]:\` 开头的 assistant 内容是**其他 Agent** 说的；无前缀的是你自己之前说的话。
 
 你可以主动 @其他参与者寻求帮助或委派任务。`;
     }

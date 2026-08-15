@@ -58,10 +58,7 @@ export class Agent {
       max_tokens: 4096,
       system: systemPrompt,
       messages: [
-        ...contextMessages.map((m) => ({
-          role: m.role as "user" | "assistant",
-          content: m.content,
-        })),
+        ...this.toLlmMessages(contextMessages),
         {
           role: "user",
           content,
@@ -76,6 +73,28 @@ export class Agent {
     }
 
     return textBlock.text;
+  }
+
+  /**
+   * 投影：Message[] → LLM messages（修复 P4-004，与 Phase 4+ 一致）
+   *
+   * 1) 归属标注：assistant 消息若非本 Agent 所说，content 前加 `[agentId]:` 前缀。
+   * 2) 相邻同角色合并：满足 Anthropic API user/assistant 严格交替约束。
+   */
+  private toLlmMessages(messages: Message[]): { role: "user" | "assistant"; content: string }[] {
+    return messages.reduce<{ role: "user" | "assistant"; content: string }[]>((acc, m) => {
+      let content = m.content;
+      if (m.role === "assistant" && m.agentId && m.agentId !== this.id) {
+        content = `[${m.agentId}]: ${m.content}`;
+      }
+      const prev = acc[acc.length - 1];
+      if (prev && prev.role === m.role) {
+        prev.content += `\n\n${content}`; // 相邻同角色 → 合并
+      } else {
+        acc.push({ role: m.role, content });
+      }
+      return acc;
+    }, []);
   }
 
   /**
@@ -94,6 +113,8 @@ export class Agent {
       return `${basePrompt}
 
 **当前会话参与者**: 你, ${participantsInfo}
+
+历史消息中，以 \`[agentId]:\` 开头的 assistant 内容是**其他 Agent** 说的；无前缀的是你自己之前说的话。
 
 你可以主动 @其他参与者寻求帮助或委派任务。`;
     }

@@ -156,8 +156,13 @@ export class A2AHandler {
       // 9. 唤醒下一个 Agent
       const nextAgent = agentFactory(nextAgentId);
 
-      // 10. 构建上下文
-      const agentReply = await nextAgent.reply(currentReply, {
+      // 10. 构建上下文（修复 P4-004：非首跳时给传入内容加委派方标注，避免"匿名转述"）
+      const delegator = this.registry.get(currentAgentId);
+      const delegatorName = delegator ? delegator.name : currentAgentId;
+      const input = chains.length === 0
+        ? currentReply // 首跳：router 已构造带归属的委派消息
+        : `(来自 @${delegatorName} 的回复，请接着处理)\n\n${currentReply}`;
+      const agentReply = await nextAgent.reply(input, {
         threadId: context.threadId,
         participants: [...context.participants, nextAgentId],
         history: currentHistory,
