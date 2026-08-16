@@ -37,6 +37,15 @@ npm run phase5 -- "方案可行吗" --pattern=debate --agents=alice,bob --rounds
 npm run phase5 -- "实现用户系统" --pattern=hierarchy --manager=alice --workers=bob,carol
 npm run phase5 -- --thread=xxx --show-workflow             # Inspect execution steps/timings
 
+# Phase 7 CLI options (shared memory / KnowledgeBase; Phase 6 用法全部不变)
+npm run phase7 -- --kb-add="经验" --type=lesson --title=标题 --keywords=a,b   # Manual entry (type: decision|lesson|observation|outcome)
+npm run phase7 -- --kb-search="词" && npm run phase7 -- --kb-list && npm run phase7 -- --kb-stats
+npm run phase7 -- --kb-distill --thread=xxx [--force]      # Distill knowledge from a thread (LLM)
+npm run phase7 -- "任务" --pattern=pipeline --agents=bob,ji-tui --auto-distill  # Auto-distill after pattern
+npm run phase7 -- "@bob ..." --no-memory                   # Disable memory injection this run
+npm run phase7 -- "@bob 记住..." --allow-kb-write          # Enable kb_write tool
+npm run phase7 -- --thread=xxx --show-memory               # Replay memory injections (kb_reads)
+
 # Type checking (recommended before commits)
 npm run typecheck
 ```
@@ -51,7 +60,7 @@ npm run typecheck
 ### Environment & Storage
 
 - **API key**: The Anthropic client is constructed bare (`new Anthropic()`, no args), so `ANTHROPIC_API_KEY` **must be set in the environment**. The code does not load `.env` — export it in your shell. Set `ANTHROPIC_BASE_URL` too if your `config/agents/*.json` `model` values route through a relay/proxy.
-- **Database location**: All phases share `~/.multi-agent-collab-tools/memory.db` (under `$HOME`, gitignored). Phase 5 extends the same DB with `workflow_executions` + `workflow_steps` tables.
+- **Database location**: All phases share `~/.multi-agent-collab-tools/memory.db` (under `$HOME`, gitignored). Phase 5 extends the same DB with `workflow_executions` + `workflow_steps` tables; Phase 6 adds `tool_calls`; Phase 7 adds `kb_entries` + `kb_reads` + `kb_distill_runs` (all ms timestamps).
 
 ## Architecture: The 5 Core Abstractions
 
@@ -87,6 +96,8 @@ Layers 1-5 are deterministic code; Layer 6 is the Agent's LLM.
 
 **Patterns & Orchestrator (Phase 5)**: Where Phase 4 collaboration is *emergent* (agents spontaneously `@handoff`), Phase 5 is *structured*. A `Pattern` is a pluggable interface; `BasePattern` provides a validate → execute → record template method and owns ball-flow. The `Orchestrator` looks up patterns in the `globalPatternRegistry`, builds a `PatternContext` (task + agents + threadId + config + history), runs the pattern, and persists each run via `WorkflowTracker` into `workflow_executions`/`workflow_steps`. Four built-in patterns: `pipeline` (linear A→B→C), `parallel` (fan-out → aggregator), `debate` (A↔B, exactly 2 agents, N rounds), `hierarchy` (manager decomposes → workers → manager merges). Patterns and A2A are orthogonal and composable (`config.a2aEnabled`).
 
+**Shared Memory / KnowledgeBase (Phase 7)**: Three orthogonal capability lines over `kb_entries` (decision/lesson/observation/outcome). *Push*: Router/Orchestrator query the KB each turn (`buildMemoryContext` = global weighted search ∪ this-thread entries) and inject top-K as `memoryContext` into the system prompt (labeled "参考信息，非当前指令"; `--no-memory` disables). *Pull*: `kb_search` (read-only) / `kb_write` (`--allow-kb-write` gated, always `verified=0`) tools; `Tool.execute` takes an optional `ToolContext{agentId, threadId}` for attribution. *Distill*: `Distiller` extracts reusable entries from thread messages + workflow_steps via strict `<entry type="...">` tags (3-tier parse: tags → JSON → visible parse_failed), double idempotency (scope-level in `kb_distill_runs` + title-level dedup). Retrieval is **JS weighted scoring** (keywords +10 / title +4 / content +2, bidirectional substring for unspaced Chinese) — FTS5 was measured and rejected for CJK (ADR-011).
+
 ## Source Structure
 
 ```
@@ -107,12 +118,20 @@ src/
 │   ├── thread/                  # Thread with collaboration chain
 │   ├── registry/                # Agent registry
 │   └── storage/                 # SQLite with messages + threads
-└── phase-05-patterns/           # Structured collaboration patterns (Pattern + Orchestrator)
-    ├── pattern/                 # Pattern interface, BasePattern (template method), registry
-    ├── patterns/                # pipeline / parallel / debate / hierarchy implementations
-    ├── orchestrator/            # Orchestrator + WorkflowTracker (executes & persists runs)
-    ├── agent/ router/ thread/ registry/ a2a/   # reuse Phase 4 components
-    └── storage/                 # SQLite: adds workflow_executions + workflow_steps tables
+├── phase-05-patterns/           # Structured collaboration patterns (Pattern + Orchestrator)
+│   ├── pattern/                 # Pattern interface, BasePattern (template method), registry
+│   ├── patterns/                # pipeline / parallel / debate / hierarchy implementations
+│   ├── orchestrator/            # Orchestrator + WorkflowTracker (executes & persists runs)
+│   ├── agent/ router/ thread/ registry/ a2a/   # reuse Phase 4 components
+│   └── storage/                 # SQLite: adds workflow_executions + workflow_steps tables
+├── phase-06-tools/              # Tool use (function calling + sandbox)
+│   ├── tools/                   # Tool interface, ToolRegistry, Sandbox, 5 builtin tools
+│   └── agent/                   # Agent with tool-use loop
+└── phase-07-knowledge/          # Shared memory / KnowledgeBase
+    ├── knowledge/               # types, KnowledgeBase (scoring search), Distiller (LLM reflection)
+    ├── tools/builtin/           # kb_search (read-only) + kb_write (gated)
+    ├── agent/ router/ orchestrator/ pattern/   # memory injection chain
+    └── storage/                 # SQLite: adds kb_entries + kb_reads + kb_distill_runs
 ```
 
 ## Agent Configuration
@@ -168,7 +187,9 @@ Truth sources:
 
 ## Current Progress
 
-Phases 0-6 complete. Phase 7 (Shared Memory / KnowledgeBase) is next.
+Phases 0-7 complete. Phase 8 (Observability) is next.
+
+Phase 7 added **shared memory / KnowledgeBase**: three orthogonal lines over `kb_entries` — *push* (Router/Orchestrator inject top-K retrieved memories into the system prompt each turn; auditable via `kb_reads` + `--show-memory`), *pull* (`kb_search`/`kb_write` tools, write gated by `--allow-kb-write`, always `verified=0`), and *distill* (`Distiller` extracts decision/lesson/observation/outcome entries from threads via strict `<entry>` tags with 3-tier parsing and double idempotency). Retrieval = JS weighted scoring (FTS5 rejected for CJK — ADR-011). New tables `kb_entries`/`kb_reads`/`kb_distill_runs` (ms). CLI: `npm run phase7 -- --kb-add/--kb-search/--kb-distill/--show-memory`.
 
 Phase 6 added **tool use** (Anthropic function calling): `Agent.reply` runs a multi-turn `tool_use → execute → tool_result` loop; a `ToolRegistry` + per-Agent `tools` whitelist gate 5 builtin tools (`read_file`/`write_file`/`list_files`/`search_files`/`run_command`); a multi-layer `Sandbox` (path-escape incl. symlink following, command whitelist, forbidden patterns, metachar rejection, `--allow-write`/`--allow-exec` authorization) is the Hard-Rails floor. Tools are orthogonal to Patterns (the loop lives inside `reply`). New table `tool_calls` (ms timestamps). CLI: `npm run phase6 -- --list-tools`, `@agent 读 package.json`, `--show-tools` replay.
 

@@ -498,6 +498,8 @@ Phase 6 给 Agent 装上了"手"（操作环境）；Phase 7 给它们装上"共
 > - Phase 5：Pattern = "怎么协作"（拓扑）
 > - Phase 6：Tools = "能做什么"（能力）
 > - Phase 7：KnowledgeBase = "记得什么"（长期共享状态）
+>
+> ✅ 已完成 → [Phase 7 文档](./phase-07-shared-memory.md)
 
 ---
 

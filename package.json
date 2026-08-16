@@ -14,6 +14,7 @@
     "phase4": "tsx src/phase-04-agent-to-agent/cli.ts",
     "phase5": "tsx src/phase-05-patterns/cli.ts",
     "phase6": "tsx src/phase-06-tools/cli.ts",
+    "phase7": "tsx src/phase-07-knowledge/cli.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

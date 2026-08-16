@@ -13,7 +13,7 @@
 | 4 | Agent 间协作 A2A | ✅ 完成 | [phase-04](./phase-04-agent-to-agent-collaboration.md) |
 | 5 | 协作模式 Pattern（系统灵魂） | ✅ 完成 | [phase-05](./phase-05-collaboration-patterns.md) |
 | 6 | 工具调用（给 Agent 装手） | ✅ 完成 | [phase-06](./phase-06-tools.md) |
-| 7 | 共享记忆与知识库 | ⬜ 待办 | — |
+| 7 | 共享记忆与知识库 | ✅ 完成 | [phase-07](./phase-07-shared-memory.md) |
 | 8 | 可观测性 | ⬜ 待办 | — |
 | 9 | Web UI 与产品化（按需） | ⬜ 待办 | — |
 | 10 | 进阶主题（选学） | ⬜ 待办 | — |
@@ -52,6 +52,7 @@ Agent 能读文件、跑命令、搜索。技术点：function calling、工具�
 
 ### Phase 7 — 共享记忆与知识库（5-7 天）
 Agent 间共享长期记忆（决策、经验、证据）。技术点：共享状态、(可选)向量检索。
+→ [详细文档](./phase-07-shared-memory.md)
 
 ### Phase 8 — 可观测性（3-4 天）
 结构化日志、trace、token 计费、回放。验收：一次协作产出完整"轨迹"。
