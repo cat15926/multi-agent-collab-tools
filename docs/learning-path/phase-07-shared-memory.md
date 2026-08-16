@@ -154,9 +154,42 @@ CLI（kb = --no-memory ? undefined : new KnowledgeBase(storage)）
 
 ---
 
-## 📚 相关文档
+## 🎁 追加：CLI 使用体验优化（2026-08-16，ADR-012）
+
+Phase 7 落地后 CLI 膨胀到 30+ flag，做了三层优化（功能零削减、旧语法全兼容、零 schema 变更）：
+
+**1. 子命令（推荐入口）**——动词不再是 flag：
+
+```bash
+npm run p7 -- kb add "内容" --type=lesson --title=标题 --keywords=a,b
+npm run p7 -- kb search "时间戳" --limit=3
+npm run p7 -- kb list · kb stats · kb del <id> · kb verify <id>
+npm run p7 -- kb distill last [--force]        # last = 最近会话
+npm run p7 -- threads [N]                      # 会话列表（找回旧会话）
+npm run p7 -- help                             # 分组用法
+```
+
+**2. REPL 交互模式**——`npm run phase7` 无参数进入，连续对话免抄 thread ID：
+
+```
+[新会话] > @bob 时间戳怎么存？           # 裸文本 = 路由对话
+[会话 8f21aa07 · 2 条] > 追问…           # thread 常驻，懒创建
+> /pattern pipeline --agents=bob,ji-tui 任务   # 一次性编排
+> /distill [--force] · /kb search 时间戳       # 就地提炼/检索
+> /memory off|on · /kbwrite on|off             # 运行时开关（零查询可证）
+> /threads · /thread last · /new               # 会话管理
+> /show memory · /agents · /patterns · /tools
+> /exit（Ctrl-D）
+```
+
+**3. one-shot 补丁**：`--thread=last` 接最近会话；`--help`/`-h` 分组 usage；`p7` npm 别名。
+
+实施中发现并修复的 2 个真 bug：readline `question()` 循环在管道输入下丢行（改 `on("line")` 串行队列）；`globalKb` 全局量在 REPL 路径空引用导致 `/distill` 静默失败（改显式传参）。详见 [ADR-012](../decisions/012-cli-ux-subcommand-repl.md)。
+
+
 
 - [ADR-011: KnowledgeBase 设计](../decisions/011-knowledge-base-design.md)（含 FTS5 弃用的实测依据）
+- [ADR-012: CLI 体验优化](../decisions/012-cli-ux-subcommand-repl.md)（子命令 + REPL + 运行时开关）
 - [核心抽象 · Shared State](../architecture/core-abstractions.md#抽象-4--共享状态shared-state)
 - [Phase 6 文档](./phase-06-tools.md)（Tool 接口/沙箱，本 Phase 复用）
 

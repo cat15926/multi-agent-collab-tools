@@ -38,13 +38,16 @@ npm run phase5 -- "实现用户系统" --pattern=hierarchy --manager=alice --wor
 npm run phase5 -- --thread=xxx --show-workflow             # Inspect execution steps/timings
 
 # Phase 7 CLI options (shared memory / KnowledgeBase; Phase 6 用法全部不变)
-npm run phase7 -- --kb-add="经验" --type=lesson --title=标题 --keywords=a,b   # Manual entry (type: decision|lesson|observation|outcome)
-npm run phase7 -- --kb-search="词" && npm run phase7 -- --kb-list && npm run phase7 -- --kb-stats
-npm run phase7 -- --kb-distill --thread=xxx [--force]      # Distill knowledge from a thread (LLM)
+npm run phase7                                           # 无参数 → REPL 交互模式（连续对话/斜杠命令）
+npm run p7 -- kb add "经验" --type=lesson --title=标题 --keywords=a,b  # Manual entry (type: decision|lesson|observation|outcome)
+npm run p7 -- kb search "词" && npm run p7 -- kb list && npm run p7 -- kb stats
+npm run p7 -- kb distill last [--force]                  # Distill knowledge from a thread (LLM)
+npm run p7 -- threads                                    # Recent conversations list
 npm run phase7 -- "任务" --pattern=pipeline --agents=bob,ji-tui --auto-distill  # Auto-distill after pattern
-npm run phase7 -- "@bob ..." --no-memory                   # Disable memory injection this run
-npm run phase7 -- "@bob 记住..." --allow-kb-write          # Enable kb_write tool
-npm run phase7 -- --thread=xxx --show-memory               # Replay memory injections (kb_reads)
+npm run phase7 -- "@bob ..." --no-memory                 # Disable memory injection this run
+npm run phase7 -- "@bob 记住..." --allow-kb-write        # Enable kb_write tool
+npm run phase7 -- --thread=last --show-memory            # Replay memory injections (kb_reads; last = 最近会话)
+# REPL 内: /help /kb … /pattern <name> [flags] 任务 /distill /memory on|off /kbwrite on|off /threads /thread <id|last> /new
 
 # Type checking (recommended before commits)
 npm run typecheck
@@ -131,6 +134,7 @@ src/
     ├── knowledge/               # types, KnowledgeBase (scoring search), Distiller (LLM reflection)
     ├── tools/builtin/           # kb_search (read-only) + kb_write (gated)
     ├── agent/ router/ orchestrator/ pattern/   # memory injection chain
+    ├── repl.ts / runtime.ts     # REPL 交互模式（无参启动）+ 运行时开关（/memory /kbwrite → rebuild）
     └── storage/                 # SQLite: adds kb_entries + kb_reads + kb_distill_runs
 ```
 

@@ -52,6 +52,11 @@ export class ToolRegistry {
     return this.tools.has(name);
   }
 
+  /** 清空注册表（运行时开关重建用，REPL /memory off → kb 工具下线） */
+  clear(): void {
+    this.tools.clear();
+  }
+
   /**
    * 转换为 Anthropic API 的 tools 数组
    * 只暴露 name/description/input_schema（不含 execute，避免泄露实现）

@@ -37,15 +37,15 @@ import { KnowledgeBase } from "./knowledge/knowledge-base.js";
 import type { EvidenceType } from "./knowledge/types.js";
 import { EVIDENCE_TYPES } from "./knowledge/types.js";
 
-/** 全局 KB 引用（runDistill 用；main 里赋值） */
-let globalKb: KnowledgeBase | undefined;
-
 /** 命令行参数 */
 interface CliArgs {
   input: string | null;
+  help: boolean;
   listTools: boolean;
   listPatterns: boolean;
   listAgents: boolean;
+  showThreads: boolean;
+  threadsLimit: number | null;
   threadId: string | null;
   showWorkflow: boolean;
   showTools: boolean;
@@ -87,9 +87,12 @@ function parseArgs(): CliArgs {
   const args = process.argv.slice(2);
   const r: CliArgs = {
     input: null,
+    help: false,
     listTools: false,
     listPatterns: false,
     listAgents: false,
+    showThreads: false,
+    threadsLimit: null,
     threadId: null,
     showWorkflow: false,
     showTools: false,
@@ -125,14 +128,74 @@ function parseArgs(): CliArgs {
     allowKbWrite: false,
   };
 
+  // ─── 子命令拦截（kb add "x" --type=lesson / threads / help）──────────
+  // 首个非 flag token 是保留字且次 token 是已知动作 → 按子命令解析，
+  // 结果回填到同一批 CliArgs 字段（后续走既有分支，零新增处理层）。
+  // 聊天输入以 @ 开头或含空格的普通句子不受影响。
+  const nonFlag = args.filter((a) => !a.startsWith("-"));
+  const isSubcommand =
+    nonFlag.length >= 1 &&
+    (nonFlag[0] === "kb" || nonFlag[0] === "threads" || nonFlag[0] === "help");
+
+  if (isSubcommand) {
+    const [cmd, action, ...rest] = nonFlag;
+    if (cmd === "help") {
+      r.help = true;
+      return r;
+    }
+    if (cmd === "threads") {
+      r.showThreads = true;
+      const n = parseInt(rest[0] ?? "", 10);
+      if (!Number.isNaN(n) && n > 0) r.threadsLimit = n;
+      return r;
+    }
+    // kb <action> [operand] [flags...]
+    switch (action) {
+      case "add":
+        r.kbAdd = rest.find((a) => !a.startsWith("-")) ?? null;
+        break;
+      case "search":
+        r.kbSearch = rest.find((a) => !a.startsWith("-")) ?? null;
+        break;
+      case "list":
+        r.kbList = true;
+        break;
+      case "stats":
+        r.kbStats = true;
+        break;
+      case "del":
+        r.kbDel = rest.find((a) => !a.startsWith("-")) ?? null;
+        break;
+      case "verify":
+        r.kbVerify = rest.find((a) => !a.startsWith("-")) ?? null;
+        break;
+      case "distill":
+        r.kbDistill = true;
+        // operand 是 threadId（也可用 --thread= 提供）
+        const tid = rest.find((a) => !a.startsWith("-"));
+        if (tid) r.threadId = tid;
+        break;
+      default:
+        console.error(`未知的知识库动作 "${action ?? ""}"。可用: add | search | list | stats | del | verify | distill`);
+        process.exitCode = 1;
+        return r;
+    }
+    // 修饰 flags（--type= / --title= / --keywords= / --agent= / --limit= / --force / --distill-model= / --thread=）
+    // 复用下面的 flag 循环：把已消费的子命令 token 剔掉，剩下的全部走 flag 解析
+    const flagsOnly = args.filter((a) => a.startsWith("-"));
+    args.splice(0, args.length, ...flagsOnly);
+  }
+
   for (const arg of args) {
     if (arg === "--list-tools" || arg === "-lt") r.listTools = true;
     else if (arg === "--list-patterns" || arg === "-lp") r.listPatterns = true;
     else if (arg === "--list-agents" || arg === "-la" || arg === "--list" || arg === "-l")
       r.listAgents = true;
+    else if (arg === "--show-threads" || arg === "-sth") r.showThreads = true;
     else if (arg === "--show-workflow" || arg === "-sw") r.showWorkflow = true;
     else if (arg === "--show-tools" || arg === "-st") r.showTools = true;
     else if (arg === "--show-memory" || arg === "-sm") r.showMemory = true;
+    else if (arg === "--help" || arg === "-h") r.help = true;
     else if (arg === "--no-a2a") r.noA2a = true;
     else if (arg === "--allow-write") r.allowWrite = true;
     else if (arg === "--allow-exec") r.allowExec = true;
@@ -153,6 +216,7 @@ function parseArgs(): CliArgs {
     else if (arg.startsWith("--workers=")) r.workers = arg.split("=")[1].split(",");
     else if (arg.startsWith("--a2a-mode=")) r.a2aMode = arg.split("=")[1];
     else if (arg.startsWith("--thread=")) r.threadId = arg.split("=")[1];
+    else if (arg.startsWith("--threads=")) r.threadsLimit = parseInt(arg.split("=")[1], 10);
     else if (arg.startsWith("--kb-add=")) r.kbAdd = arg.slice("--kb-add=".length);
     else if (arg.startsWith("--kb-search=")) r.kbSearch = arg.slice("--kb-search=".length);
     else if (arg.startsWith("--kb-del=")) r.kbDel = arg.slice("--kb-del=".length);
@@ -171,7 +235,7 @@ function parseArgs(): CliArgs {
 }
 
 /** 列出所有工具 */
-function listTools(registry: ToolRegistry): void {
+export function listTools(registry: ToolRegistry): void {
   const tools = registry.list();
   console.log("\n可用的工具：\n");
   if (tools.length === 0) {
@@ -185,7 +249,7 @@ function listTools(registry: ToolRegistry): void {
 }
 
 /** 列出所有 Pattern */
-function listPatterns(): void {
+export function listPatterns(): void {
   const patterns = globalPatternRegistry.listAll();
   console.log("\n可用的协作模式 (Pattern)：\n");
   for (const pattern of patterns) {
@@ -196,7 +260,7 @@ function listPatterns(): void {
 }
 
 /** 列出所有 Agent */
-function listAgents(registry: AgentRegistry): void {
+export function listAgents(registry: AgentRegistry): void {
   const agents = registry.listAll();
   if (agents.length === 0) {
     console.log("没有找到任何 Agent 配置文件。");
@@ -211,6 +275,336 @@ function listAgents(registry: AgentRegistry): void {
     console.log(`     人格: ${agent.persona.slice(0, 60)}...`);
     if (tools) console.log(tools);
     console.log();
+  }
+}
+
+/** Agent 构造选项工厂（one-shot / REPL 共用）：工具 + onToolCall（实时输出 + 落盘） */
+export function makeAgentOptionsFactory(
+  storage: Storage,
+  toolRegistry: ToolRegistry,
+  sandbox: Sandbox
+): () => AgentOptions {
+  return () => ({
+    toolRegistry,
+    sandbox,
+    onToolCall: (info) => {
+      const icon =
+        info.status === "ok" ? "🔧" : info.status === "blocked" ? "🚫" : "⚠️";
+      const inputStr = JSON.stringify(info.input);
+      const inputPreview =
+        inputStr.length > 80 ? inputStr.slice(0, 80) + "..." : inputStr;
+      console.log(`${icon} ${info.toolName}(${inputPreview})`);
+      console.log(`   → ${info.status} · ${info.duration}ms`);
+
+      // 落盘（失败不阻塞主流程）
+      try {
+        storage.addToolCall({
+          threadId: info.threadId,
+          agentId: info.agentId,
+          toolName: info.toolName,
+          input: inputStr,
+          output: info.result.content.slice(0, 2000),
+          status: info.status,
+          durationMs: info.duration,
+        });
+      } catch {
+        /* 落盘失败忽略 */
+      }
+    },
+  });
+}
+
+/** buildAgent 工厂（one-shot / REPL 共用）：CLI --tools 优先，否则 Agent 配置 tools */
+export function buildAgentFactory(
+  registry: AgentRegistry,
+  storage: Storage,
+  makeAgentOptions: () => AgentOptions,
+  toolsOverride: string[]
+): (agentId: string) => Agent {
+  return (agentId: string): Agent => {
+    const cfg = registry.get(agentId);
+    if (!cfg) {
+      throw new Error(`找不到 Agent "${agentId}"（--list-agents 查看）`);
+    }
+    storage.upsertAgent(cfg);
+    const opts = makeAgentOptions();
+    opts.allowedTools = toolsOverride.length > 0 ? toolsOverride : (cfg.tools ?? undefined);
+    return new Agent(cfg, opts);
+  };
+}
+
+/** Pattern 校验 + PatternConfig 组装（one-shot / REPL 共用；不合法直接 throw） */
+export function buildPatternConfig(
+  patternName: string,
+  opts: {
+    noA2a?: boolean;
+    agents: string[];
+    aggregator?: string | null;
+    rounds?: number | null;
+    manager?: string | null;
+    workers?: string[];
+  }
+): PatternConfig {
+  if (!globalPatternRegistry.get(patternName)) {
+    throw new Error(`Pattern "${patternName}" 不存在（--list-patterns / /patterns 查看）`);
+  }
+  const config: PatternConfig = { patternName, a2aEnabled: !opts.noA2a };
+
+  if (patternName === "parallel") {
+    if (!opts.aggregator) throw new Error("parallel 模式需要指定 --aggregator=ID");
+    config.aggregator = opts.aggregator;
+  }
+  if (patternName === "debate") {
+    if (opts.agents.length !== 2) throw new Error("debate 模式需要恰好 2 个 Agent（--agents=A,B）");
+    config.agentA = opts.agents[0];
+    config.agentB = opts.agents[1];
+    config.maxRounds = opts.rounds || 3;
+  }
+  if (patternName === "hierarchy") {
+    if (!opts.manager) throw new Error("hierarchy 模式需要指定 --manager=ID");
+    if (!opts.workers || opts.workers.length === 0) throw new Error("hierarchy 模式需要指定 --workers=A,B");
+    config.manager = opts.manager;
+    config.workers = opts.workers;
+  }
+  return config;
+}
+
+/** Pattern 执行（one-shot 分支 2 / REPL /pattern 共用）
+ *  返回 success；不 process.exit（REPL 里要继续循环） */
+export async function runPattern(params: {
+  patternName: string;
+  task: string;
+  threadId: string;
+  config: PatternConfig;
+  registry: AgentRegistry;
+  threads: ThreadManager;
+  storage: Storage;
+  orchestrator: Orchestrator;
+  buildAgent: (agentId: string) => Agent;
+  autoDistill?: boolean;
+  force?: boolean;
+  distillModel?: string | null;
+  kb?: KnowledgeBase;
+}): Promise<boolean> {
+  const pattern = globalPatternRegistry.get(params.patternName)!;
+  const { registry, threads, storage, orchestrator } = params;
+
+  // 确定参与 Agent（config 是 index-signature 类型，先收窄）
+  const cfgAgents = (params.config.agents as string[] | undefined) ?? [];
+  const agentIds: string[] =
+    params.patternName === "hierarchy"
+      ? [params.config.manager as string, ...((params.config.workers as string[]) ?? [])]
+      : params.patternName === "parallel"
+      ? [...cfgAgents, params.config.aggregator as string]
+      : cfgAgents.length > 0
+      ? cfgAgents
+      : [registry.getDefaultAgentId() || "ji-tui"];
+
+  const agents = agentIds.map((id) => {
+    threads.addParticipant(params.threadId, id);
+    return params.buildAgent(id);
+  });
+
+  // 存储用户消息
+  storage.addMessage({
+    conversationId: params.threadId,
+    role: "user",
+    content: params.task,
+  });
+
+  console.log(`\n使用 ${pattern.name} 模式执行任务...`);
+  console.log(`会话 ID: ${params.threadId}`);
+  console.log(`参与 Agent: ${agentIds.join(", ")}\n`);
+
+  // Pattern 步骤实时输出（复用 Phase 5 的 PatternEvents）
+  const events: PatternEvents = {
+    onStepStart: ({ stepNumber, agentId }) => {
+      console.log(`\n──── Step ${stepNumber} · @${agentId} ────`);
+    },
+    onStepComplete: ({ agentId, output, success, duration, error }) => {
+      if (success) {
+        console.log(`\n${output}`);
+        console.log(`  ✓ @${agentId} · ${duration}ms\n`);
+      } else {
+        console.log(`  ✗ @${agentId} 失败 · ${error}\n`);
+      }
+    },
+  };
+
+  const result = await orchestrator.executePattern({
+    patternName: params.patternName,
+    task: params.task,
+    agents,
+    threadId: params.threadId,
+    config: params.config,
+    events,
+  });
+
+  storage.addMessage({
+    conversationId: params.threadId,
+    role: "assistant",
+    content: result.finalOutput,
+    agentId: agentIds[agentIds.length - 1],
+  });
+
+  console.log(`\n${"=".repeat(60)}`);
+  console.log(`执行结果: ${result.success ? "成功" : "失败"}`);
+  console.log(`执行步骤: ${result.steps.length}`);
+  console.log(`总耗时: ${result.metadata.duration}ms`);
+  console.log(`${"=".repeat(60)}\n`);
+
+  if (!result.success) {
+    console.error(`执行失败: ${result.failureReason}`);
+  }
+
+  // Phase 7：--auto-distill（pattern 成功后提炼；编排器本身零 LLM 直接调用）
+  if (params.autoDistill && result.success && params.kb) {
+    console.log();
+    await runDistill(storage, params.kb!, params.threadId, {
+      force: params.force,
+      distillModel: params.distillModel,
+    });
+  }
+
+  console.log(`工具调用回放: npm run phase7 -- --thread=${params.threadId} --show-tools`);
+  console.log(`记忆注入回放: npm run phase7 -- --thread=${params.threadId} --show-memory\n`);
+  return result.success;
+}
+
+/** 会话列表渲染（threads 子命令 / --show-threads / REPL /threads 共用）
+ *  注意：conversations 表时间戳是秒（历史遗留），渲染时 ×1000 */
+export function printThreads(storage: Storage, limit: number = 10): void {
+  const convs = storage.listConversations().slice(0, limit);
+  if (convs.length === 0) {
+    console.log("还没有任何会话。");
+    return;
+  }
+  console.log(`\n最近会话（${convs.length}）：\n`);
+  for (const c of convs) {
+    const messages = storage.getMessages(c.id);
+    const last = messages[messages.length - 1];
+    const preview = last ? last.content.replace(/\s+/g, " ").slice(0, 40) : "（无消息）";
+    console.log(`  ${c.id}  ${new Date(c.updatedAt * 1000).toLocaleString()} · ${messages.length} 条消息`);
+    console.log(`    最后: ${preview}${last && last.content.length > 40 ? "…" : ""}`);
+  }
+  console.log();
+}
+
+/** 解析 "last" 魔法值为最近会话 ID（--thread=last / /thread last 共用） */
+export function resolveThreadRef(storage: Storage, ref: string): string | null {
+  if (ref !== "last") return ref;
+  const latest = storage.listConversations()[0];
+  return latest ? latest.id : null;
+}
+
+/** ─── 知识库 op（三个入口共用：旧 flag / kb 子命令 / REPL /kb）────────── */
+
+export function opKbAdd(
+  kb: KnowledgeBase,
+  input: {
+    content: string;
+    type: string | null;
+    title: string | null;
+    keywords: string[];
+    threadId: string | null;
+    agent: string | null;
+  }
+): void {
+  const type = input.type as EvidenceType;
+  if (!EVIDENCE_TYPES.includes(type)) {
+    console.error(`错误: --type 必须是 ${EVIDENCE_TYPES.join(" | ")}（当前: ${input.type ?? "未提供"}）`);
+    process.exitCode = 1;
+    return;
+  }
+  const entry = kb.add({
+    type,
+    title: input.title ?? input.content.slice(0, 20),
+    content: input.content,
+    keywords: input.keywords,
+    sourceThread: input.threadId ?? undefined,
+    sourceAgent: input.agent ?? "user",
+    verified: true, // 人工添加 = 已验证
+  });
+  console.log(`✓ 已添加 [${entry.type}] ${entry.title}（id: ${entry.id}）`);
+}
+
+export function opKbSearch(
+  kb: KnowledgeBase,
+  query: string,
+  opts: { type?: string | null; limit?: number | null } = {}
+): void {
+  const hits = kb.search(query, {
+    limit: opts.limit ?? 10,
+    type: (opts.type as EvidenceType) ?? undefined,
+  });
+  if (hits.length === 0) {
+    console.log(`未找到与 "${query}" 相关的条目。`);
+  } else {
+    console.log(`\n检索 "${query}" 命中 ${hits.length} 条：\n`);
+    for (const h of hits) {
+      const mark = h.entry.verified ? " ✓" : "";
+      console.log(`  [${h.entry.type}] ${h.entry.title}${mark}（score ${h.score}）`);
+      console.log(`    ${h.entry.content.slice(0, 100)}`);
+      console.log(`    来源: ${h.entry.sourceThread ?? "手动"} · ${h.entry.sourceAgent ?? "-"} · ${new Date(h.entry.timestamp).toLocaleString()}`);
+      console.log();
+    }
+  }
+}
+
+export function opKbList(kb: KnowledgeBase, opts: { type?: string | null; limit?: number | null } = {}): void {
+  const entries = kb.list({
+    type: (opts.type as EvidenceType) ?? undefined,
+    limit: opts.limit ?? 20,
+  });
+  if (entries.length === 0) {
+    console.log("知识库为空。");
+    return;
+  }
+  console.log(`\n知识库条目（${entries.length} 条）：\n`);
+  for (const e of entries) {
+    const mark = e.verified ? " ✓" : "";
+    console.log(`  [${e.type}] ${e.title}${mark}（${e.id}）`);
+    console.log(`    ${e.content.slice(0, 100)}${e.content.length > 100 ? "…" : ""}`);
+    console.log(`    keywords: ${e.keywords.join(", ") || "-"} · 来源: ${e.sourceThread ?? "手动"} · ${e.sourceAgent ?? "-"}`);
+    console.log();
+  }
+}
+
+export function opKbDel(kb: KnowledgeBase, id: string): void {
+  const ok = kb.remove(id);
+  console.log(ok ? `✓ 已删除 ${id}` : `未找到 ${id}`);
+}
+
+export function opKbVerify(storage: Storage, id: string): void {
+  const ok = storage.setKbEntryVerified(id, true);
+  console.log(ok ? `✓ 已背书 ${id}` : `未找到 ${id}`);
+}
+
+export function opKbStats(kb: KnowledgeBase): void {
+  const s = kb.stats();
+  console.log(`\n知识库统计：`);
+  console.log(`  总条目: ${s.total}`);
+  for (const [t, n] of Object.entries(s.byType)) {
+    console.log(`    ${t}: ${n}`);
+  }
+  console.log(`  来源线程: ${s.threads}`);
+  console.log(`  已背书: ${s.verified}`);
+  if (s.lastAddedAt) console.log(`  最近添加: ${new Date(s.lastAddedAt).toLocaleString()}`);
+}
+
+/** 单 Agent 回复渲染（one-shot 分支 1 / REPL 共用） */
+export function printReply(agentId: string, content: string, a2aReplies?: Array<{ agentId: string; content: string }>): void {
+  console.log(`\n${"─".repeat(60)}`);
+  console.log(`@${agentId}:`);
+  console.log(`${"─".repeat(60)}`);
+  console.log(content);
+  if (a2aReplies && a2aReplies.length > 0) {
+    for (const reply of a2aReplies) {
+      console.log(`\n${"─".repeat(60)}`);
+      console.log(`@${reply.agentId} (A2A):`);
+      console.log(`${"─".repeat(60)}`);
+      console.log(reply.content);
+    }
   }
 }
 
@@ -235,7 +629,7 @@ function showToolCalls(storage: Storage, threadId: string): void {
 }
 
 /** 显示记忆注入记录（--show-memory，Phase 7）：注入必须可证明 */
-function showMemoryReads(storage: Storage, kb: KnowledgeBase, threadId: string): void {
+export function showMemoryReads(storage: Storage, kb: KnowledgeBase, threadId: string): void {
   const reads = storage.getKbReadsByThread(threadId);
   if (reads.length === 0) {
     console.log(`会话 ${threadId} 没有记忆注入记录。`);
@@ -302,9 +696,11 @@ function buildDistillTranscript(storage: Storage, threadId: string): { transcrip
   return { transcript: parts.join("\n\n"), task };
 }
 
-/** 执行提炼（--kb-distill / --auto-distill 共用）：scope 级幂等 + 失败显形落库 */
-async function runDistill(
+/** 执行提炼（--kb-distill / --auto-distill / REPL /distill 共用）：scope 级幂等 + 失败显形落库
+ *  kb 显式传参（不依赖 globalKb —— REPL 路径不经过 main()，全局量不可靠） */
+export async function runDistill(
   storage: Storage,
+  kb: KnowledgeBase,
   threadId: string,
   opts: { force?: boolean; distillModel?: string | null }
 ): Promise<void> {
@@ -330,7 +726,7 @@ async function runDistill(
   const distiller = new Distiller(
     new Anthropic(),
     opts.distillModel ?? "claude-opus-4-8",
-    globalKb!
+    kb
   );
 
   try {
@@ -400,54 +796,72 @@ function showWorkflowDetails(storage: Storage, threadId: string): void {
   }
 }
 
-/** 打印用法 */
+/** 打印用法（分组；kb 子命令为主推入口，旧 flag 兼容保留） */
 function printUsage(): void {
   console.log(`
-用法:
-  npm run phase7 -- "@agent 任务"                      # 单 Agent + 工具 + 记忆注入（默认）
-  npm run phase7 -- "任务" --pattern=NAME --agents=A,B  # Pattern 编排 + 记忆注入
-  npm run phase7 -- --list-tools                        # 列出工具
-  npm run phase7 -- --thread=<id> --show-tools          # 工具调用回放
-  npm run phase7 -- --thread=<id> --show-memory         # 记忆注入回放（Phase 7）
+Phase 7 CLI — 对话 / 知识库 / 协作模式
 
-知识库参数（Phase 7）:
-  --kb-add="内容" --type=T --title=标题 [--keywords=a,b] [--thread=] [--agent=]
-                       手动添加（type: decision|lesson|observation|outcome）
-  --kb-search="词"     评分检索（[--type=] [--limit=N]）
-  --kb-list [--type=T] [--limit=N] / --kb-stats / --kb-del=<id> / --kb-verify=<id>
-  --kb-distill --thread=<id> [--force] [--distill-model=M]   从会话提炼知识
-  --auto-distill       Pattern 成功后自动提炼
-  --no-memory          本轮零查询零注入
-  --allow-kb-write     开启 kb_write 工具（Agent 可写知识库）
+对话:
+  npm run phase7                                     # 无参数 → 交互模式（连续对话，免抄 thread ID）
+  npm run phase7 -- "@agent 任务"                     # 单 Agent + 工具 + 记忆注入
+  npm run phase7 -- "任务" --pattern=NAME --agents=A,B # Pattern 编排
+  npm run phase7 -- "继续..." --thread=last           # 接着最近会话聊（last = 最近一条）
 
-工具参数:
-  --tools=A,B,C        限定可用工具（覆盖 Agent 配置）
+会话:
+  npm run phase7 -- threads [N]                       # 最近会话列表（默认 10）
+  npm run phase7 -- --thread=<id|last> --show-tools   # 工具调用回放
+  npm run phase7 -- --thread=<id|last> --show-memory  # 记忆注入回放
+  npm run phase7 -- --thread=<id|last> --show-workflow
+
+知识库（子命令，推荐）:
+  npm run phase7 -- kb add "内容" --type=lesson --title=标题 [--keywords=a,b] [--thread=] [--agent=]
+                                                     # type: decision|lesson|observation|outcome
+  npm run phase7 -- kb search "词" [--type=] [--limit=N]
+  npm run phase7 -- kb list [--type=] [--limit=N] · kb stats
+  npm run phase7 -- kb del <id> · kb verify <id>
+  npm run phase7 -- kb distill <threadId|last> [--force] [--distill-model=M]
+
+知识库（旧 flag 写法，继续可用）:
+  --kb-add= / --kb-search= / --kb-list / --kb-stats / --kb-del= / --kb-verify=
+  --kb-distill --thread= / --auto-distill / --no-memory / --allow-kb-write
+
+工具:
+  --tools=A,B,C        限定可用工具（覆盖 Agent 配置）   --list-tools 列出
   --workdir=PATH       沙箱工作目录（默认当前目录）
-  --allow-write        允许写文件（write_file）
-  --allow-exec         允许执行非白名单命令（危险命令仍被拦）
+  --allow-write        允许写文件    --allow-exec 允许非白名单命令
 
-Pattern 参数（可选，与工具正交）:
-  --pattern=NAME       pipeline / parallel / debate / hierarchy
-  --agents=A,B,C       参与 Agent
-  --aggregator=ID      聚合器（parallel）
-  --rounds=N           辩论轮数（debate，默认 3）
-  --manager=ID         管理者（hierarchy）
-  --workers=A,B        工作者（hierarchy）
+Pattern（与工具正交）:
+  --pattern=NAME       pipeline / parallel / debate / hierarchy   --list-patterns 列出
+  --agents=A,B,C / --aggregator=ID（parallel） / --rounds=N（debate）
+  --manager=ID + --workers=A,B（hierarchy）
+
+其他: --list-agents / help / -h / --help
 
 示例:
-  # 手动沉淀经验 + 下次注入
-  npm run phase7 -- --kb-add="时间戳必须毫秒显式插入" --type=lesson --title="时间戳单位" --keywords=时间戳,毫秒
-  npm run phase7 -- "@bob 怎么处理时间戳存储？"
+  # 沉淀经验 → 下次对话自动注入
+  npm run phase7 -- kb add "时间戳必须毫秒显式插入" --type=lesson --title="时间戳单位" --keywords=时间戳,毫秒
+  npm run p7 -- "@bob 怎么处理时间戳存储？"
 
-  # Pattern + 自动提炼 + 幂等
-  npm run phase7 -- "设计配置模块" --pattern=pipeline --agents=bob,ji-tui --auto-distill
-  npm run phase7 -- --kb-distill --thread=<id>          # → 已提炼过，跳过
+  # Pattern + 自动提炼
+  npm run p7 -- "设计配置模块" --pattern=pipeline --agents=bob,ji-tui --auto-distill
 `);
 }
 
 /** 主函数 */
 async function main() {
   const args = parseArgs();
+
+  // ─── --help / help / -h：分组用法，退出码 0 ─────────────────────
+  if (args.help) {
+    printUsage();
+    return;
+  }
+
+  // ─── 无任何参数 → 进入 REPL 交互模式 ──────────────────────────
+  if (process.argv.slice(2).length === 0) {
+    const { startRepl } = await import("./repl.js");
+    return startRepl();
+  }
 
   // 初始化组件
   const storage = new Storage();
@@ -456,7 +870,6 @@ async function main() {
 
   // Phase 7：知识库（--no-memory 时为 undefined → 全程零查询零注入零落盘）
   const kb = args.noMemory ? undefined : new KnowledgeBase(storage);
-  globalKb = kb;
 
   const router = new Router(registry, threads, storage, { kb });
   const orchestrator = new Orchestrator(storage, { kb });
@@ -481,95 +894,61 @@ async function main() {
     toolRegistry.registerAll(createKbTools(kb, { allowWrite: args.allowKbWrite }));
   }
 
-  // ─── Phase 7：知识库管理子命令（不进入对话/pattern 流程）──────────
+  // ─── Phase 7：知识库管理（旧 flag 入口；子命令入口在 parseArgs 里回填同一批字段）──
   if (args.kbAdd !== null) {
-    const type = args.kbType as EvidenceType;
-    if (!EVIDENCE_TYPES.includes(type)) {
-      console.error(`错误: --type 必须是 ${EVIDENCE_TYPES.join(" | ")}（当前: ${args.kbType ?? "未提供"}）`);
-      process.exit(1);
-    }
-    const entry = kb!.add({
-      type,
-      title: args.kbTitle ?? args.kbAdd.slice(0, 20),
+    opKbAdd(kb!, {
       content: args.kbAdd,
+      type: args.kbType,
+      title: args.kbTitle,
       keywords: args.kbKeywords,
-      sourceThread: args.threadId ?? undefined,
-      sourceAgent: args.kbAgent ?? "user",
-      verified: true, // 人工添加 = 已验证
+      threadId: args.threadId,
+      agent: args.kbAgent,
     });
-    console.log(`✓ 已添加 [${entry.type}] ${entry.title}（id: ${entry.id}）`);
     return;
   }
 
   if (args.kbSearch !== null) {
-    const hits = kb!.search(args.kbSearch, {
-      limit: args.kbLimit ?? 10,
-      type: (args.kbType as EvidenceType) ?? undefined,
-    });
-    if (hits.length === 0) {
-      console.log(`未找到与 "${args.kbSearch}" 相关的条目。`);
-    } else {
-      console.log(`\n检索 "${args.kbSearch}" 命中 ${hits.length} 条：\n`);
-      for (const h of hits) {
-        const mark = h.entry.verified ? " ✓" : "";
-        console.log(`  [${h.entry.type}] ${h.entry.title}${mark}（score ${h.score}）`);
-        console.log(`    ${h.entry.content.slice(0, 100)}`);
-        console.log(`    来源: ${h.entry.sourceThread ?? "手动"} · ${h.entry.sourceAgent ?? "-"} · ${new Date(h.entry.timestamp).toLocaleString()}`);
-        console.log();
-      }
-    }
+    opKbSearch(kb!, args.kbSearch, { type: args.kbType, limit: args.kbLimit });
     return;
   }
 
   if (args.kbList) {
-    const entries = kb!.list({
-      type: (args.kbType as EvidenceType) ?? undefined,
-      limit: args.kbLimit ?? 20,
-    });
-    if (entries.length === 0) {
-      console.log("知识库为空。");
-      return;
-    }
-    console.log(`\n知识库条目（${entries.length} 条）：\n`);
-    for (const e of entries) {
-      const mark = e.verified ? " ✓" : "";
-      console.log(`  [${e.type}] ${e.title}${mark}（${e.id}）`);
-      console.log(`    ${e.content.slice(0, 100)}${e.content.length > 100 ? "…" : ""}`);
-      console.log(`    keywords: ${e.keywords.join(", ") || "-"} · 来源: ${e.sourceThread ?? "手动"} · ${e.sourceAgent ?? "-"}`);
-      console.log();
-    }
+    opKbList(kb!, { type: args.kbType, limit: args.kbLimit });
     return;
   }
 
   if (args.kbDel !== null) {
-    const ok = kb!.remove(args.kbDel);
-    console.log(ok ? `✓ 已删除 ${args.kbDel}` : `未找到 ${args.kbDel}`);
+    opKbDel(kb!, args.kbDel);
     return;
   }
 
   if (args.kbVerify !== null) {
-    const ok = storage.setKbEntryVerified(args.kbVerify, true);
-    console.log(ok ? `✓ 已背书 ${args.kbVerify}` : `未找到 ${args.kbVerify}`);
+    opKbVerify(storage, args.kbVerify);
     return;
   }
 
   if (args.kbStats) {
-    const s = kb!.stats();
-    console.log(`\n知识库统计：`);
-    console.log(`  总条目: ${s.total}`);
-    for (const [t, n] of Object.entries(s.byType)) {
-      console.log(`    ${t}: ${n}`);
-    }
-    console.log(`  来源线程: ${s.threads}`);
-    console.log(`  已背书: ${s.verified}`);
-    if (s.lastAddedAt) console.log(`  最近添加: ${new Date(s.lastAddedAt).toLocaleString()}`);
+    opKbStats(kb!);
     return;
+  }
+
+  // --thread=last / kb distill last → 最近会话 ID（必须在所有消费 threadId 的分支之前）
+  if (args.threadId === "last") {
+    const resolved = resolveThreadRef(storage, "last");
+    if (!resolved) {
+      console.error("错误: 还没有任何会话，无法使用 --thread=last");
+      process.exit(1);
+    }
+    args.threadId = resolved;
   }
 
   // 处理 --list-* 命令
   if (args.listTools) return listTools(toolRegistry);
   if (args.listPatterns) return listPatterns();
   if (args.listAgents) return listAgents(registry);
+
+  // 会话列表（threads 子命令 / --show-threads）
+  if (args.showThreads) return printThreads(storage, args.threadsLimit ?? 10);
 
   // 处理 --show-* 命令
   if (args.showTools && args.threadId) return showToolCalls(storage, args.threadId);
@@ -582,7 +961,7 @@ async function main() {
       console.error("错误: --kb-distill 需要 --thread=<id>");
       process.exit(1);
     }
-    return runDistill(storage, args.threadId, {
+    return runDistill(storage, kb!, args.threadId, {
       force: args.force,
       distillModel: args.distillModel,
     });
@@ -591,7 +970,7 @@ async function main() {
   // 验证输入
   if (!args.input) {
     printUsage();
-    console.error("错误: 请提供输入内容");
+    console.error("错误: 请提供输入内容（无参数运行 npm run phase7 进入交互模式）");
     process.exit(1);
   }
 
@@ -606,69 +985,17 @@ async function main() {
    * 构建 Agent 构造选项：注入工具 + onToolCall（实时输出 + 落盘）
    * 这是 Phase 6 的关键 —— 所有 Agent（路由 / Pattern）都通过此函数获得工具能力。
    */
-  const makeAgentOptions = (): AgentOptions => {
-    return {
-      toolRegistry,
-      sandbox,
-      onToolCall: (info) => {
-        const icon =
-          info.status === "ok" ? "🔧" : info.status === "blocked" ? "🚫" : "⚠️";
-        const inputStr = JSON.stringify(info.input);
-        const inputPreview =
-          inputStr.length > 80 ? inputStr.slice(0, 80) + "..." : inputStr;
-        console.log(`${icon} ${info.toolName}(${inputPreview})`);
-        console.log(`   → ${info.status} · ${info.duration}ms`);
-
-        // 落盘（失败不阻塞主流程）
-        try {
-          storage.addToolCall({
-            threadId: info.threadId,
-            agentId: info.agentId,
-            toolName: info.toolName,
-            input: inputStr,
-            output: info.result.content.slice(0, 2000),
-            status: info.status,
-            durationMs: info.duration,
-          });
-        } catch {
-          /* 落盘失败忽略 */
-        }
-      },
-    };
-  };
+  const makeAgentOptions = makeAgentOptionsFactory(storage, toolRegistry, sandbox);
 
   /** 构建 Agent（解析 allowedTools：CLI --tools 优先，否则 Agent 配置 tools，否则全部） */
-  const buildAgent = (agentId: string): Agent => {
-    const cfg = registry.get(agentId);
-    if (!cfg) {
-      console.error(`错误: 找不到 Agent "${agentId}"`);
-      process.exit(1);
-    }
-    storage.upsertAgent(cfg);
-    const opts = makeAgentOptions();
-    opts.allowedTools = args.tools.length > 0 ? args.tools : (cfg.tools ?? undefined);
-    return new Agent(cfg, opts);
-  };
+  const buildAgent = buildAgentFactory(registry, storage, makeAgentOptions, args.tools);
 
   // ─── 分支 1：单 Agent 路由（无 --pattern）──────────────────────
   if (!args.patternName) {
     try {
       const result = await router.route(args.input, threadId ?? undefined, buildAgent);
 
-      console.log(`\n${"─".repeat(60)}`);
-      console.log(`@${result.agentId}:`);
-      console.log(`${"─".repeat(60)}`);
-      console.log(result.content);
-
-      // A2A 协作回复
-      if (result.a2aTriggered && result.a2aReplies && result.a2aReplies.length > 0) {
-        for (const reply of result.a2aReplies) {
-          console.log(`\n${"─".repeat(60)}`);
-          console.log(`@${reply.agentId} (A2A):`);
-          console.log(`${"─".repeat(60)}`);
-          console.log(reply.content);
-        }
-      }
+      printReply(result.agentId, result.content, result.a2aReplies);
 
       console.log(`\n会话 ID: ${result.threadId}`);
       console.log(`工具调用回放: npm run phase7 -- --thread=${result.threadId} --show-tools`);
@@ -682,127 +1009,32 @@ async function main() {
   }
 
   // ─── 分支 2：Pattern 编排（有 --pattern）──────────────────────
-  const pattern = globalPatternRegistry.get(args.patternName);
-  if (!pattern) {
-    console.error(`错误: Pattern "${args.patternName}" 不存在`);
-    console.error("运行 --list-patterns 查看可用的 Pattern");
-    process.exit(1);
-  }
-
-  const config: PatternConfig = {
-    patternName: args.patternName,
-    a2aEnabled: !args.noA2a,
-  };
-
-  if (args.patternName === "parallel") {
-    if (!args.aggregator) {
-      console.error("错误: parallel 模式需要指定 --aggregator");
-      process.exit(1);
-    }
-    config.aggregator = args.aggregator;
-  }
-  if (args.patternName === "debate") {
-    if (args.agents.length !== 2) {
-      console.error("错误: debate 模式需要恰好 2 个 Agent");
-      process.exit(1);
-    }
-    config.agentA = args.agents[0];
-    config.agentB = args.agents[1];
-    config.maxRounds = args.rounds || 3;
-  }
-  if (args.patternName === "hierarchy") {
-    if (!args.manager) {
-      console.error("错误: hierarchy 模式需要指定 --manager");
-      process.exit(1);
-    }
-    if (args.workers.length === 0) {
-      console.error("错误: hierarchy 模式需要指定 --workers");
-      process.exit(1);
-    }
-    config.manager = args.manager;
-    config.workers = args.workers;
-  }
-
-  // 确定参与 Agent
-  const agentIds =
-    args.patternName === "hierarchy"
-      ? [args.manager!, ...args.workers]
-      : args.patternName === "parallel"
-      ? [...args.agents, args.aggregator!]
-      : args.agents.length > 0
-      ? args.agents
-      : [registry.getDefaultAgentId() || "ji-tui"];
-
-  const agents = agentIds.map((id) => {
-    threads.addParticipant(threadId!, id);
-    return buildAgent(id);
+  const config = buildPatternConfig(args.patternName, {
+    noA2a: args.noA2a,
+    agents: args.agents,
+    aggregator: args.aggregator,
+    rounds: args.rounds,
+    manager: args.manager,
+    workers: args.workers,
   });
-
-  // 存储用户消息
-  storage.addMessage({
-    conversationId: threadId,
-    role: "user",
-    content: args.input,
-  });
-
-  console.log(`\n使用 ${pattern.name} 模式执行任务...`);
-  console.log(`会话 ID: ${threadId}`);
-  console.log(`参与 Agent: ${agentIds.join(", ")}\n`);
-
-  // Pattern 步骤实时输出（复用 Phase 5 的 PatternEvents）
-  const events: PatternEvents = {
-    onStepStart: ({ stepNumber, agentId }) => {
-      console.log(`\n──── Step ${stepNumber} · @${agentId} ────`);
-    },
-    onStepComplete: ({ agentId, output, success, duration, error }) => {
-      if (success) {
-        console.log(`\n${output}`);
-        console.log(`  ✓ @${agentId} · ${duration}ms\n`);
-      } else {
-        console.log(`  ✗ @${agentId} 失败 · ${error}\n`);
-      }
-    },
-  };
 
   try {
-    const result = await orchestrator.executePattern({
+    await runPattern({
       patternName: args.patternName,
       task: args.input,
-      agents,
-      threadId,
+      threadId: threadId!,
       config,
-      events,
+      registry,
+      threads,
+      storage,
+      orchestrator,
+      buildAgent,
+      autoDistill: args.autoDistill,
+      force: args.force,
+      distillModel: args.distillModel,
+      kb,
     });
-
-    storage.addMessage({
-      conversationId: threadId,
-      role: "assistant",
-      content: result.finalOutput,
-      agentId: agentIds[agentIds.length - 1],
-    });
-
-    console.log(`\n${"=".repeat(60)}`);
-    console.log(`执行结果: ${result.success ? "成功" : "失败"}`);
-    console.log(`执行步骤: ${result.steps.length}`);
-    console.log(`总耗时: ${result.metadata.duration}ms`);
-    console.log(`${"=".repeat(60)}\n`);
-
-    if (!result.success) {
-      console.error(`执行失败: ${result.failureReason}`);
-    }
-
-    // Phase 7：--auto-distill（pattern 成功后提炼；编排器本身零 LLM 直接调用）
-    if (args.autoDistill && result.success && kb) {
-      console.log();
-      await runDistill(storage, threadId, {
-        force: args.force,
-        distillModel: args.distillModel,
-      });
-    }
-
-    console.log(`工具调用回放: npm run phase7 -- --thread=${threadId} --show-tools`);
-    console.log(`记忆注入回放: npm run phase7 -- --thread=${threadId} --show-memory`);
-    console.log(`继续此会话: npm run phase7 -- "继续" --thread=${threadId} --pattern=${args.patternName}\n`);
+    process.exitCode = process.exitCode || 0;
   } catch (error) {
     console.error("执行失败:", error);
     process.exit(1);
