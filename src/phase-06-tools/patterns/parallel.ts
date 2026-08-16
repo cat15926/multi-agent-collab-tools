@@ -56,10 +56,13 @@ export class ParallelPattern extends BasePattern {
 
     let stepNumber = 1;
 
-    // 并行执行所有 Worker
-    const workerPromises = workers.map((worker) =>
-      this.executeAgent(worker, task, context, stepNumber++)
-    );
+    // 并行执行所有 Worker（修复 P5-002：executor 角色 + 输入执行框定）
+    const workerPromises = workers.map((worker) => {
+      const framedInput =
+        `以下任务由你（@${worker.id}）独立完成，请直接给出你的完整方案/结论，` +
+        `不要转交他人、不要重新分工：\n\n${task}`;
+      return this.executeAgent(worker, framedInput, context, stepNumber++, { role: "executor" });
+    });
 
     // 等待所有 Worker 完成
     const workerSteps = await Promise.all(workerPromises);

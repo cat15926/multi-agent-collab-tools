@@ -94,13 +94,17 @@ export class HierarchyPattern extends BasePattern {
       return;
     }
 
-    // Step 2: 工作者并行执行任务
+    // Step 2: 工作者并行执行任务（修复 P5-002：executor 角色 + 输入执行框定）
     const workerPromises = decomposition.tasks.map((taskItem) => {
       const worker = this.findAgent(taskItem.assignedTo, agents);
       if (!worker) {
         return Promise.reject(new Error(`找不到工作者: ${taskItem.assignedTo}`));
       }
-      return this.executeAgent(worker, taskItem.description, context, stepNumber++);
+      const framedInput =
+        `以下是你（@${worker.id}）负责的任务，请直接产出该任务的技术方案` +
+        `（架构 / 数据模型 / 关键流程等设计要素），不要转交他人、不要重新分工：\n\n` +
+        taskItem.description;
+      return this.executeAgent(worker, framedInput, context, stepNumber++, { role: "executor" });
     });
 
     const workerSteps = await Promise.all(workerPromises);

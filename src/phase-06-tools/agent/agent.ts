@@ -29,6 +29,12 @@ export interface AgentReplyOptions {
   hasMention: boolean;
   /** 会话历史消息 */
   history: Message[];
+  /**
+   * 本次调用的协作角色（修复 P5-002，Pattern 专用）
+   * - executor: 执行者——任务已分配给你，直接产出，不委派
+   * - collaborator/manager/省略: 保留"可主动委派"提示（A2A / debate / 汇总用）
+   */
+  role?: "executor" | "collaborator" | "manager";
 }
 
 /** 工具调用事件（实时输出 / 落盘用） */
@@ -59,7 +65,7 @@ export interface AgentOptions {
 }
 
 const MAX_TOOL_TURNS_DEFAULT = 10;
-const MAX_TOKENS = 4096;
+const MAX_TOKENS = 8192; // 修复 P6-001(#8): 4096 易截断长设计输出
 const TOOL_RESULT_LIMIT = 2000; // 工具结果喂回 LLM 前截断，防上下文爆炸
 
 export class Agent {
@@ -95,7 +101,7 @@ export class Agent {
    */
   async reply(content: string, options: AgentReplyOptions): Promise<string> {
     const contextMessages = this.truncateMessages(options.history);
-    const systemPrompt = this.buildSystemPrompt(options.participants);
+    const systemPrompt = this.buildSystemPrompt(options.participants, options.role);
 
     // 过滤出本 Agent 可用的工具
     const effectiveRegistry = this.toolRegistry?.forAgent(this.allowedTools);
@@ -259,9 +265,16 @@ export class Agent {
   }
 
   /**
-   * 构建系统提示（包含身份、参与者、工具提示）
+   * 构建系统提示（包含身份、参与者、工具提示；角色感知——修复 P5-002）
+   *
+   * executor（Pattern worker）：任务已由编排分配，替换委派鼓励为执行指令，
+   * 并显式告知 @mention 在结构化编排中不会触发任何委派。
+   * 其他/省略：保留"可主动委派"（A2A / debate / manager 汇总用）。
    */
-  private buildSystemPrompt(participants: string[]): string {
+  private buildSystemPrompt(
+    participants: string[],
+    role?: "executor" | "collaborator" | "manager"
+  ): string {
     const participantsInfo = participants
       .filter((p) => p !== "user" && p !== this.id)
       .map((p) => `@${p}`)
@@ -277,7 +290,12 @@ export class Agent {
     }
 
     if (participantsInfo) {
-      prompt += `\n\n**当前会话参与者**: 你, ${participantsInfo}\n\n历史消息中，以 \`[agentId]:\` 开头的 assistant 内容是**其他 Agent** 说的；无前缀的是你自己之前说的话。\n\n你可以主动 @其他参与者寻求帮助或委派任务。`;
+      prompt += `\n\n**当前会话参与者**: 你, ${participantsInfo}\n\n历史消息中，以 \`[agentId]:\` 开头的 assistant 内容是**其他 Agent** 说的；无前缀的是你自己之前说的话。`;
+      if (role === "executor") {
+        prompt += `\n\n**你是执行者（executor）**：任务已分配给你，请**直接产出**完整结果，**不要转交、不要重新分工、不要 @其他参与者**——你正处于结构化编排中，@mention 不会触发任何委派，你的回复就是本步骤的唯一产出。`;
+      } else {
+        prompt += `\n\n你可以主动 @其他参与者寻求帮助或委派任务。`;
+      }
     }
 
     return prompt;

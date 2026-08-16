@@ -21,6 +21,12 @@ export interface AgentReplyOptions {
   hasMention: boolean;
   /** 会话历史消息 */
   history: Message[];
+  /**
+   * 本次调用的协作角色（修复 P5-002，Pattern 专用）
+   * - executor: 执行者——任务已分配给你，直接产出，不委派
+   * - collaborator/manager/省略: 保留"可主动委派"提示（A2A / debate / 汇总用）
+   */
+  role?: "executor" | "collaborator" | "manager";
 }
 
 export class Agent {
@@ -47,11 +53,11 @@ export class Agent {
    */
   async reply(content: string, options: AgentReplyOptions): Promise<string> {
     const contextMessages = this.truncateMessages(options.history);
-    const systemPrompt = this.buildSystemPrompt(options.participants);
+    const systemPrompt = this.buildSystemPrompt(options.participants, options.role);
 
     const response = await this.client.messages.create({
       model: this.model,
-      max_tokens: 4096,
+      max_tokens: 8192,
       system: systemPrompt,
       messages: [
         ...this.toLlmMessages(contextMessages),
@@ -93,15 +99,32 @@ export class Agent {
   }
 
   /**
-   * 构建系统提示（包含身份和参与者信息）
+   * 构建系统提示（包含身份和参与者信息；角色感知——修复 P5-002）
+   *
+   * executor（Pattern worker）：任务已由编排分配，替换委派鼓励为执行指令，
+   * 并显式告知 @mention 在结构化编排中不会触发任何委派。
+   * 其他/省略：保留"可主动委派"（A2A / debate / manager 汇总用）。
    */
-  private buildSystemPrompt(participants: string[]): string {
+  private buildSystemPrompt(
+    participants: string[],
+    role?: "executor" | "collaborator" | "manager"
+  ): string {
     const participantsInfo = participants
       .filter((p) => p !== "user" && p !== this.id)
       .map((p) => `@${p}`)
       .join(", ");
 
     const basePrompt = this.persona;
+
+    if (participantsInfo && role === "executor") {
+      return `${basePrompt}
+
+**当前会话参与者**: 你, ${participantsInfo}
+
+历史消息中，以 \`[agentId]:\` 开头的 assistant 内容是**其他 Agent** 说的；无前缀的是你自己之前说的话。
+
+**你是执行者（executor）**：任务已分配给你，请**直接产出**完整结果，**不要转交、不要重新分工、不要 @其他参与者**——你正处于结构化编排中，@mention 不会触发任何委派，你的回复就是本步骤的唯一产出。`;
+    }
 
     if (participantsInfo) {
       return `${basePrompt}

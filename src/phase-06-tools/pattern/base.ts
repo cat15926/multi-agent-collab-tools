@@ -108,12 +108,14 @@ export abstract class BasePattern implements Pattern {
 
   /**
    * 执行单个 Agent 调用
+   * @param opts.role 协作角色（修复 P5-002）：worker 步传 "executor" 抑制委派倾向
    */
   protected async executeAgent(
     agent: Agent,
     input: string,
     context: PatternContext,
-    stepNumber: number
+    stepNumber: number,
+    opts?: { role?: "executor" | "collaborator" | "manager" }
   ): Promise<PatternStep> {
     const startTime = Date.now();
     const events = context.events;
@@ -127,6 +129,7 @@ export abstract class BasePattern implements Pattern {
         participants: context.agents.map((a) => a.id),
         history: (context.history || []) as any, // PatternHistoryItem compatible with Message
         hasMention: false,
+        role: opts?.role,
       });
 
       const duration = Date.now() - startTime;

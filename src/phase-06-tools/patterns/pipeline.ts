@@ -50,16 +50,20 @@ export class PipelinePattern extends BasePattern {
       return;
     }
 
-    // 顺序执行
+    // 顺序执行（修复 P5-002：各棒为执行者，executor 角色；首棒为原始任务，后续棒为上一棒输出）
     let currentInput = task;
     let stepNumber = 1;
 
     for (const agent of orderedAgents) {
+      const framedInput =
+        `以下是流水线中交给你的内容，请直接基于它完成你这一环的工作并产出结果，` +
+        `不要转交他人、不要重新分工：\n\n${currentInput}`;
       const step = await this.executeAgent(
         agent,
-        currentInput,
+        framedInput,
         context,
-        stepNumber
+        stepNumber,
+        { role: "executor" }
       );
 
       result.steps.push(step);
