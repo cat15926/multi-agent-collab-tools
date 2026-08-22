@@ -15,8 +15,11 @@
     "phase5": "tsx src/phase-05-patterns/cli.ts",
     "phase6": "tsx src/phase-06-tools/cli.ts",
     "phase7": "tsx src/phase-07-knowledge/cli.ts",
+    "phase8": "tsx src/phase-08-observability/cli.ts",
     "typecheck": "tsc --noEmit",
-    "p7": "tsx src/phase-07-knowledge/cli.ts"
+    "p7": "tsx src/phase-07-knowledge/cli.ts",
+    "p8": "tsx src/phase-08-observability/cli.ts",
+    "smoke8": "tsx src/phase-08-observability/observability/smoke.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.115.0",

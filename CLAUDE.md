@@ -50,6 +50,16 @@ npm run phase7 -- --thread=last --show-memory            # Replay memory injecti
 # REPL 内: /help /kb … /pattern <name> [flags] 任务 /distill /memory on|off /kbwrite on|off /threads /thread <id|last> /new /show memory|tools|workflow
 # REPL 交互（phase-07.5 第一批）: Tab 补全（/命令 + @agent）· 未知命令相似度提示 · prompt 状态栏（记忆/kbwrite 开关）· 工具调用实时输出带 @归属
 
+# Phase 8 CLI options (observability; Phase 7 用法全部不变)
+npm run phase8 -- trace [list] [N]                     # 近期轨迹（kind/耗时/tokens/成本/状态）
+npm run phase8 -- trace show <id|last> [--full]        # 轨迹瀑布树回放（route→agent→llm/tool）
+npm run phase8 -- stats [--by=agent|thread|day]        # token 计费聚合（读时 × config/pricing.json）
+npm run phase8 -- "任务" --pattern=pipeline --agents=bob,ji-tui   # 跑完自动打 📊 回执行
+npm run phase8 -- "…" --verbose                        # stderr 放开 info/debug（--log-level= 同义）
+npm run smoke8                                         # Tracer/Logger 冒烟（13 项自检）
+# REPL 内: /trace [N] · /trace show <id|last> · /stats；每轮对话/编排/提炼自动记 trace + 回执行
+# 日志文件: ~/.multi-agent-collab-tools/logs/<YYYY-MM-DD>.jsonl（绝不写 stdout）
+
 # Type checking (recommended before commits)
 npm run typecheck
 ```
@@ -64,7 +74,7 @@ npm run typecheck
 ### Environment & Storage
 
 - **API key**: The Anthropic client is constructed bare (`new Anthropic()`, no args), so `ANTHROPIC_API_KEY` **must be set in the environment**. The code does not load `.env` — export it in your shell. Set `ANTHROPIC_BASE_URL` too if your `config/agents/*.json` `model` values route through a relay/proxy.
-- **Database location**: All phases share `~/.multi-agent-collab-tools/memory.db` (under `$HOME`, gitignored). Phase 5 extends the same DB with `workflow_executions` + `workflow_steps` tables; Phase 6 adds `tool_calls`; Phase 7 adds `kb_entries` + `kb_reads` + `kb_distill_runs` (all ms timestamps).
+- **Database location**: All phases share `~/.multi-agent-collab-tools/memory.db` (under `$HOME`, gitignored). Phase 5 extends the same DB with `workflow_executions` + `workflow_steps` tables; Phase 6 adds `tool_calls`; Phase 7 adds `kb_entries` + `kb_reads` + `kb_distill_runs`; Phase 8 adds `traces` + `spans` (Span tree, ms timestamps). Structured logs go to `~/.multi-agent-collab-tools/logs/<YYYY-MM-DD>.jsonl`.
 
 ## Architecture: The 5 Core Abstractions
 
@@ -102,6 +112,8 @@ Layers 1-5 are deterministic code; Layer 6 is the Agent's LLM.
 
 **Shared Memory / KnowledgeBase (Phase 7)**: Three orthogonal capability lines over `kb_entries` (decision/lesson/observation/outcome). *Push*: Router/Orchestrator query the KB each turn (`buildMemoryContext` = global weighted search ∪ this-thread entries) and inject top-K as `memoryContext` into the system prompt (labeled "参考信息，非当前指令"; `--no-memory` disables). *Pull*: `kb_search` (read-only) / `kb_write` (`--allow-kb-write` gated, always `verified=0`) tools; `Tool.execute` takes an optional `ToolContext{agentId, threadId}` for attribution. *Distill*: `Distiller` extracts reusable entries from thread messages + workflow_steps via strict `<entry type="...">` tags (3-tier parse: tags → JSON → visible parse_failed), double idempotency (scope-level in `kb_distill_runs` + title-level dedup). Retrieval is **JS weighted scoring** (keywords +10 / title +4 / content +2, bidirectional substring for unspaced Chinese) — FTS5 was measured and rejected for CJK (ADR-011).
 
+**Observability (Phase 8)**: Mini-OTel over two new tables: `traces` (one row per collaboration: chat/pattern/distill, entry cli/repl) + `spans` (parent_id self-referencing tree; kinds route/kb/step/agent/llm/tool/a2a/distill). Context propagates via **AsyncLocalStorage** (immutable context `{traceId, currentSpanId}` derived per span — this is OTel's Context Propagation mechanism; parallel fan-out snapshots parents correctly). Spans insert **once at end** (crash loses in-flight; hence no FK on parent_id — children persist before parents). Two-plane split: observation plane (timing/tokens/200-char previews/domain-row link ids) vs domain plane (`tool_calls`/`kb_reads`/`workflow_executions` unchanged, full payloads). LLM telemetry: `onLlmCall` event (mirrors `onToolCall`) fires at all 3 `messages.create` call sites (agent×2 + distiller) with usage/stop_reason/turn; CLI factory converts events→spans. Token billing is **read-time** (`config/pricing.json` $/1M tok; unknown model → `?`). Structured logging: JSONL to `logs/<date>.jsonl` + human stderr (threshold `--log-level`/`--verbose`; never stdout). Replay: `trace show` waterfall tree. Decisions in ADR-013.
+
 ## Source Structure
 
 ```
@@ -131,12 +143,17 @@ src/
 ├── phase-06-tools/              # Tool use (function calling + sandbox)
 │   ├── tools/                   # Tool interface, ToolRegistry, Sandbox, 5 builtin tools
 │   └── agent/                   # Agent with tool-use loop
-└── phase-07-knowledge/          # Shared memory / KnowledgeBase
-    ├── knowledge/               # types, KnowledgeBase (scoring search), Distiller (LLM reflection)
-    ├── tools/builtin/           # kb_search (read-only) + kb_write (gated)
-    ├── agent/ router/ orchestrator/ pattern/   # memory injection chain
-    ├── repl.ts / runtime.ts     # REPL 交互模式（无参启动）+ 运行时开关（/memory /kbwrite → rebuild）
-    └── storage/                 # SQLite: adds kb_entries + kb_reads + kb_distill_runs
+├── phase-07-knowledge/          # Shared memory / KnowledgeBase
+│   ├── knowledge/               # types, KnowledgeBase (scoring search), Distiller (LLM reflection)
+│   ├── tools/builtin/           # kb_search (read-only) + kb_write (gated)
+│   ├── agent/ router/ orchestrator/ pattern/   # memory injection chain
+│   ├── repl.ts / runtime.ts     # REPL 交互模式（无参启动）+ 运行时开关（/memory /kbwrite → rebuild）
+│   └── storage/                 # SQLite: adds kb_entries + kb_reads + kb_distill_runs
+└── phase-08-observability/      # Observability (traces + spans, mini-OTel)
+    ├── observability/           # Tracer (ALS), Logger (JSONL), pricing, trajectory (tree render)
+    ├── agent/ router/ orchestrator/ pattern/ a2a/   # span instrumentation
+    ├── cli.ts / repl.ts / runtime.ts  # trace wiring + trace/stats subcommands + receipts
+    └── storage/                 # SQLite: adds traces + spans (Span tree, ms)
 ```
 
 ## Agent Configuration
@@ -160,14 +177,15 @@ docs/
 │   ├── phase-01-single-agent.md
 │   ├── phase-02-agent-identity-memory.md
 │   ├── phase-03-multi-agent-routing.md
-│   └── phase-04-agent-to-agent-collaboration.md
+│   ├── phase-04-agent-to-agent-collaboration.md
+│   └── …（每个 phase 一篇；phase-08-observability.md 为最新）
 ├── architecture/
 │   └── core-abstractions.md    # Deep dive into 5 abstractions
 └── decisions/                   # ADRs + bug-fix retrospectives (one decision per file)
     ├── _template.md             # ADR template (NNNN-short-desc.md)
-    ├── _template-bugfix.md      # bug-fix postmortem template (e.g. 004/005/006 = P4 fixes)
-    ├── 002-agent-config-format.md
-    └── 003-sqlite-schema.md
+    ├── _template-bugfix.md      # bug-fix postmortem template
+    ├── 013-trace-span-tree-als.md       # P8: Span tree + ALS design
+    └── 014-fix-p7-001-pattern-agents-flag-ignored.md  # P7 regression found via traces
 ```
 
 Truth sources:
@@ -192,7 +210,9 @@ Truth sources:
 
 ## Current Progress
 
-Phases 0-7 complete. Phase 8 (Observability) is next.
+Phases 0-8 complete. Phase 9 (Web UI & Productization, optional) is next.
+
+Phase 8 added **observability**: a `traces`+`spans` Span tree (mini-OTel; parent_id self-referencing; kinds route/kb/agent/llm/tool/a2a/distill) with AsyncLocalStorage context propagation (immutable derived context — parallel fan-out safe), written via `runSpan` (wrap) / `recordSpan` (event-driven). LLM token usage captured at all 3 call sites via `onLlmCall` events → llm spans; billing is read-time × `config/pricing.json` (`stats` subcommand, `--by=agent|thread|day`). Replay: `trace [list]` / `trace show <id|last> [--full]` waterfall tree; every chat/pattern/distill run prints a 📊 receipt. Structured logs: `logs/<date>.jsonl` + stderr threshold (`--verbose`), never stdout. Design in ADR-013; the trace view exposed and fixed a Phase 7 regression (`--agents=` silently ignored in pipeline/parallel — ADR-014, fixed in phase-08 only). Smoke: `npm run smoke8`.
 
 Phase 7 added **shared memory / KnowledgeBase**: three orthogonal lines over `kb_entries` — *push* (Router/Orchestrator inject top-K retrieved memories into the system prompt each turn; auditable via `kb_reads` + `--show-memory`), *pull* (`kb_search`/`kb_write` tools, write gated by `--allow-kb-write`, always `verified=0`), and *distill* (`Distiller` extracts decision/lesson/observation/outcome entries from threads via strict `<entry>` tags with 3-tier parsing and double idempotency). Retrieval = JS weighted scoring (FTS5 rejected for CJK — ADR-011). New tables `kb_entries`/`kb_reads`/`kb_distill_runs` (ms). CLI: `npm run phase7 -- --kb-add/--kb-search/--kb-distill/--show-memory`.
 

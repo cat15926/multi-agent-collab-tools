@@ -15,7 +15,7 @@
 | 6 | 工具调用（给 Agent 装手） | ✅ 完成 | [phase-06](./phase-06-tools.md) |
 | 7 | 共享记忆与知识库 | ✅ 完成 | [phase-07](./phase-07-shared-memory.md) |
 | 7.5 | 交互体验优化（参照 Claude Code） | 🔄 进行中 | [phase-07.5](./phase-07.5-interaction-ux.md) |
-| 8 | 可观测性 | ⬜ 待办 | — |
+| 8 | 可观测性（Trace/Span 树/计费/回放） | ✅ 完成 | [phase-08](./phase-08-observability.md) |
 | 9 | Web UI 与产品化（按需） | ⬜ 待办 | — |
 | 10 | 进阶主题（选学） | ⬜ 待办 | — |
 
@@ -57,6 +57,7 @@ Agent 间共享长期记忆（决策、经验、证据）。技术点：共享�
 
 ### Phase 8 — 可观测性（3-4 天）
 结构化日志、trace、token 计费、回放。验收：一次协作产出完整"轨迹"。
+→ [详细文档](./phase-08-observability.md)
 
 ### Phase 9 — Web UI 与产品化（按需，1-2 周）
 浏览器聊天界面（多线程、@路由、Agent 卡片）。⚠️ 内核（P1-P5）稳了再做。

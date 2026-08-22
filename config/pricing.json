@@ -1,0 +1,6 @@
+{
+  "$comment": "Phase 8 token 计价表。单位：$/1M tokens（input/output 分开）。读时计价——只存 token 事实，单价更新后历史账单自动修正。relay/自建模型未上报 usage 或未配价 → 成本显示 ?（不猜）。",
+  "claude-opus-4-8": { "input": 15, "output": 75 },
+  "claude-sonnet-4-8": { "input": 3, "output": 15 },
+  "claude-haiku-4-5-20251001": { "input": 1, "output": 5 }
+}
