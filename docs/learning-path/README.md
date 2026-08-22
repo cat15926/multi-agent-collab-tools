@@ -14,6 +14,7 @@
 | 5 | 协作模式 Pattern（系统灵魂） | ✅ 完成 | [phase-05](./phase-05-collaboration-patterns.md) |
 | 6 | 工具调用（给 Agent 装手） | ✅ 完成 | [phase-06](./phase-06-tools.md) |
 | 7 | 共享记忆与知识库 | ✅ 完成 | [phase-07](./phase-07-shared-memory.md) |
+| 7.5 | 交互体验优化（参照 Claude Code） | 🔄 进行中 | [phase-07.5](./phase-07.5-interaction-ux.md) |
 | 8 | 可观测性 | ⬜ 待办 | — |
 | 9 | Web UI 与产品化（按需） | ⬜ 待办 | — |
 | 10 | 进阶主题（选学） | ⬜ 待办 | — |

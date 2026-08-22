@@ -293,7 +293,7 @@ export function makeAgentOptionsFactory(
       const inputStr = JSON.stringify(info.input);
       const inputPreview =
         inputStr.length > 80 ? inputStr.slice(0, 80) + "..." : inputStr;
-      console.log(`${icon} ${info.toolName}(${inputPreview})`);
+      console.log(`${icon} @${info.agentId} ${info.toolName}(${inputPreview})`);
       console.log(`   → ${info.status} · ${info.duration}ms`);
 
       // 落盘（失败不阻塞主流程）
@@ -608,8 +608,8 @@ export function printReply(agentId: string, content: string, a2aReplies?: Array<
   }
 }
 
-/** 显示工具调用记录（--show-tools） */
-function showToolCalls(storage: Storage, threadId: string): void {
+/** 显示工具调用记录（--show-tools / REPL /show tools 共用） */
+export function showToolCalls(storage: Storage, threadId: string): void {
   const calls = storage.getToolCallsByThread(threadId);
   if (calls.length === 0) {
     console.log(`会话 ${threadId} 没有工具调用记录。`);
@@ -762,8 +762,8 @@ export async function runDistill(
   }
 }
 
-/** 工作流执行详情（--show-workflow，Phase 5） */
-function showWorkflowDetails(storage: Storage, threadId: string): void {
+/** 工作流执行详情（--show-workflow / REPL /show workflow 共用） */
+export function showWorkflowDetails(storage: Storage, threadId: string): void {
 
   const executions = storage.getWorkflowExecutionsByThread(threadId);
   if (executions.length === 0) {

@@ -30,6 +30,8 @@ import {
   listPatterns,
   listAgents,
   showMemoryReads,
+  showToolCalls,
+  showWorkflowDetails,
   runDistill,
   makeAgentOptionsFactory,
   buildAgentFactory,
@@ -38,6 +40,67 @@ import {
 } from "./cli.js";
 import { KnowledgeBase } from "./knowledge/knowledge-base.js";
 import { globalPatternRegistry } from "./pattern/registry.js";
+
+/** REPL 命令表（相似度提示 + Tab 补全共用；与 handleLine 的 switch case 一一对应） */
+const REPL_COMMANDS = [
+  "help", "exit", "quit", "q", "new",
+  "threads", "thread", "agents", "patterns", "tools",
+  "memory", "kbwrite", "kb", "distill", "show", "pattern",
+];
+
+/** 编辑距离（未知命令相似度提示用；命令都是短词，朴素 DP 足够） */
+function levenshtein(a: string, b: string): number {
+  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const curr = [i];
+    for (let j = 1; j <= b.length; j++) {
+      curr[j] = Math.min(
+        prev[j] + 1,                                    // 删除
+        curr[j - 1] + 1,                                // 插入
+        prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)   // 替换
+      );
+    }
+    prev = curr;
+  }
+  return prev[b.length];
+}
+
+/** 相似命令提示：编辑距离最小且 ≤2 → 返回 "/xxx"，否则 null */
+function suggestCommand(input: string): string | null {
+  if (!input) return null;
+  let best: string | null = null;
+  let bestDist = Infinity;
+  for (const c of REPL_COMMANDS) {
+    const d = levenshtein(input, c);
+    if (d < bestDist) {
+      bestDist = d;
+      best = c;
+    }
+  }
+  return bestDist <= 2 ? best : null;
+}
+
+/** Tab 补全（readline completer 协议：completions = 整行候选串，第二参 = 当前行）
+ *  两级：行首 "/" 且尚无空格 → 补全命令名；行尾 "@xxx" token → 补全 Agent id */
+function makeCompleter(agentIds: string[]): (line: string) => [string[], string] {
+  return (line) => {
+    if (line.startsWith("/") && !/\s/.test(line)) {
+      const hits = REPL_COMMANDS.filter((c) => (`/${c}`).startsWith(line)).map(
+        (c) => `/${c} `
+      );
+      return [hits, line];
+    }
+    const m = line.match(/(^|\s)@(\S*)$/);
+    if (m) {
+      const frag = m[2].toLowerCase();
+      const hits = agentIds
+        .filter((id) => id.toLowerCase().startsWith(frag))
+        .map((id) => `${line}${id.slice(m[2].length)} `);
+      return [hits, line];
+    }
+    return [[], line];
+  };
+}
 
 /** /kb 与 kb 子命令共用的动作分发（rest: operand + flag 串） */
 function dispatchKb(rt: Runtime, rest: string[]): void {
@@ -177,16 +240,16 @@ async function handleLine(rt: Runtime, line: string, state: { threadId: string |
         return true;
       }
       case "show": {
-        // /show memory|tools|workflow —— 回放当前会话
+        // /show memory|tools|workflow —— 回放当前会话（就地完成，不逃逸到 one-shot）
         const what = rest[0];
         if (!state.threadId) {
           console.log("当前还没有会话。");
           return true;
         }
-        if (what === "memory")
-          showMemoryReads(rt.storage, rt.kb, state.threadId);
-        else if (what === "tools") console.log("(回放请用) npm run phase7 -- --thread=" + state.threadId + " --show-tools");
-        else console.log("用法: /show memory");
+        if (what === "memory") showMemoryReads(rt.storage, rt.kb, state.threadId);
+        else if (what === "tools") showToolCalls(rt.storage, state.threadId);
+        else if (what === "workflow") showWorkflowDetails(rt.storage, state.threadId);
+        else console.log("用法: /show memory|tools|workflow");
         return true;
       }
       case "pattern": {
@@ -241,9 +304,13 @@ async function handleLine(rt: Runtime, line: string, state: { threadId: string |
         }
         return true;
       }
-      default:
-        console.log(`未知命令 /${cmd}（/help 查看）`);
+      default: {
+        // 相似度提示：编辑距离 ≤2 的最近命令（/ditsill → /distill）
+        const hint = suggestCommand(cmd);
+        const suffix = hint ? `，是不是想输入 /${hint}？` : "";
+        console.log(`未知命令 /${cmd || ""}${suffix}（/help 查看）`);
         return true;
+      }
     }
   }
 
@@ -275,8 +342,10 @@ function printReplHelp(): void {
   /kbwrite on|off             kb_write 门控
   /threads [N] · /thread <id|last> · /new    会话管理
   /agents · /patterns · /tools              列表
-  /show memory                回放当前会话的记忆注入
-  /help · /exit（Ctrl-D）`);
+  /show memory|tools|workflow 回放当前会话的记忆注入/工具调用/编排执行
+  /help · /exit（Ctrl-D）
+
+提示: 输入 "/" 或行尾 "@" 后按 Tab 可补全命令 / Agent 名`);
 }
 
 /** REPL 入口（cli.ts 无参数启动时动态 import 调用）
@@ -294,15 +363,18 @@ export async function startRepl(opts: { workdir?: string; allowWrite?: boolean; 
     input: process.stdin,
     output: process.stdout,
     terminal: isTTY,
+    completer: makeCompleter(rt.registry.listIds()),
   });
 
+  // 状态栏：memory/kbwrite 开关直接影响下一句话的行为，必须在 prompt 里可见
+  // （每轮 handleLine 后都会重设，toggle 即时刷新）
   const updatePrompt = (): void => {
-    rl.setPrompt(
-      state.threadId ? `[会话 ${state.threadId.slice(-8)}] > ` : "[新会话] > "
-    );
+    const thread = state.threadId ? `会话 ${state.threadId.slice(-8)}` : "新会话";
+    rl.setPrompt(`[${thread} · 记忆${rt.memoryOn ? "on" : "off"} · kbwrite${rt.kbWriteOn ? "on" : "off"}] > `);
   };
 
-  console.log(`🧩 Phase 7 交互模式 · Agent: ${rt.registry.listAll().length} · 工具: ${rt.toolRegistry.list().length} · 记忆注入: on`);
+  console.log(`🧩 Phase 7 交互模式 · Agent: ${rt.registry.listAll().length} · 工具: ${rt.toolRegistry.list().length} · 记忆注入: ${rt.memoryOn ? "on" : "off"}`);
+  console.log(`📁 沙箱目录: ${rt.sandbox.config.workDir}`);
   console.log(`输入 /help 查看命令，/exit 或 Ctrl-D 退出\n`);
 
   let exited = false;

@@ -47,7 +47,8 @@ npm run phase7 -- "任务" --pattern=pipeline --agents=bob,ji-tui --auto-distill
 npm run phase7 -- "@bob ..." --no-memory                 # Disable memory injection this run
 npm run phase7 -- "@bob 记住..." --allow-kb-write        # Enable kb_write tool
 npm run phase7 -- --thread=last --show-memory            # Replay memory injections (kb_reads; last = 最近会话)
-# REPL 内: /help /kb … /pattern <name> [flags] 任务 /distill /memory on|off /kbwrite on|off /threads /thread <id|last> /new
+# REPL 内: /help /kb … /pattern <name> [flags] 任务 /distill /memory on|off /kbwrite on|off /threads /thread <id|last> /new /show memory|tools|workflow
+# REPL 交互（phase-07.5 第一批）: Tab 补全（/命令 + @agent）· 未知命令相似度提示 · prompt 状态栏（记忆/kbwrite 开关）· 工具调用实时输出带 @归属
 
 # Type checking (recommended before commits)
 npm run typecheck
