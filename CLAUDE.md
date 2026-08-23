@@ -60,6 +60,15 @@ npm run smoke8                                         # Tracer/Logger 冒烟（
 # REPL 内: /trace [N] · /trace show <id|last> · /stats；每轮对话/编排/提炼自动记 trace + 回执行
 # 日志文件: ~/.multi-agent-collab-tools/logs/<YYYY-MM-DD>.jsonl（绝不写 stdout）
 
+# Phase 9 CLI options (Claude Code Brain; Phase 8 用法全部不变)
+npm run phase9 -- "@bob 看看 package.json 有哪些 script"   # bob/nim/ji-tui 默认 CC brain（原生 Read/Bash/Grep）
+npm run phase9 -- "@bob 你好" --brain=anthropic            # 回退裸 API brain（行为同 Phase 8）
+npm run phase9 -- "任务" --pattern=pipeline --agents=bob,ji-tui  # Pattern 编排全 CC（注意成本 5-20×）
+npm run phase9 -- "…" --cc-max-turns=15 --cc-budget=0.5    # CC 轮数/成本护栏（超预算 abort）
+# runtime 选择优先级: --brain= > config/agents/*.json "runtime" 字段 > anthropic
+# 沙箱: canUseTool→Sandbox 映射（Edit/Write 需 --allow-write；Bash 走白名单）；settingSources 隔离
+# kb: team-kb MCP 进程内注入（kb_search 常开；kb_write 需 --allow-kb-write）；/memory off 不挂
+
 # Type checking (recommended before commits)
 npm run typecheck
 ```
@@ -67,9 +76,9 @@ npm run typecheck
 ## Tech Stack
 
 - **TypeScript** + **Node.js >= 24** (ES2022 target, ESNext modules)
-- **Direct LLM SDKs**: `@anthropic-ai/sdk` (no frameworks during learning phase)
+- **Direct LLM SDKs**: `@anthropic-ai/sdk` (no frameworks during learning phase); Phase 9 adds `@anthropic-ai/claude-agent-sdk` (Claude Code runtime, locked 0.3.241) + `zod` + `@modelcontextprotocol/sdk` (peers)
 - **Storage**: SQLite via `better-sqlite3`
-- **Runtime**: `tsx` for direct TypeScript execution
+- **Runtime**: `tsx` for direct TypeScript execution; **pnpm-managed node_modules** (npm install fails — use `pnpm install`)
 
 ### Environment & Storage
 
@@ -114,6 +123,8 @@ Layers 1-5 are deterministic code; Layer 6 is the Agent's LLM.
 
 **Observability (Phase 8)**: Mini-OTel over two new tables: `traces` (one row per collaboration: chat/pattern/distill, entry cli/repl) + `spans` (parent_id self-referencing tree; kinds route/kb/step/agent/llm/tool/a2a/distill). Context propagates via **AsyncLocalStorage** (immutable context `{traceId, currentSpanId}` derived per span — this is OTel's Context Propagation mechanism; parallel fan-out snapshots parents correctly). Spans insert **once at end** (crash loses in-flight; hence no FK on parent_id — children persist before parents). Two-plane split: observation plane (timing/tokens/200-char previews/domain-row link ids) vs domain plane (`tool_calls`/`kb_reads`/`workflow_executions` unchanged, full payloads). LLM telemetry: `onLlmCall` event (mirrors `onToolCall`) fires at all 3 `messages.create` call sites (agent×2 + distiller) with usage/stop_reason/turn; CLI factory converts events→spans. Token billing is **read-time** (`config/pricing.json` $/1M tok; unknown model → `?`). Structured logging: JSONL to `logs/<date>.jsonl` + human stderr (threshold `--log-level`/`--verbose`; never stdout). Replay: `trace show` waterfall tree. Decisions in ADR-013.
 
+**Brain Abstraction & Claude Code Runtime (Phase 9)**: The LLM loop is extracted from `Agent` into a swappable `Brain` interface (`agent/brain.ts`): `reply({agentId, threadId, systemPrompt, messages}, {onLlmCall, onToolCall}) → Promise<string>`. `AnthropicBrain` = the Phase 6/8 loop moved verbatim (fallback path). `ClaudeCodeBrain` = `@anthropic-ai/claude-agent-sdk` `query()` — full CC agentic loop with native Read/Edit/Bash/Grep. Selection: `--brain=` > agent JSON `runtime` field (all three agents default `claude-code`) > anthropic. Key mechanisms (ADR-015): **stateless** (project Thread is the sole memory source; history re-sent per reply in `<conversation_history>` tags); **two-layer sandbox** (CC's own cwd boundary + `canUseTool`→`Sandbox` mapping in `cc-permissions.ts`; `settingSources: []` isolation is mandatory — otherwise user `.claude/settings.local.json` allow rules auto-approve tools and bypass the sandbox, found in testing); **kb via in-process MCP** (`createSdkMcpServer` → `mcp__team-kb__kb_search/kb_write`, ToolContext attribution passes through, `/memory off` unmounts); **observability mapping** (one `onLlmCall` per SDKAssistantMessage with turn increments; last one deferred to attach `ccTotalCostUsd`/`ccNumTurns` → span attrs `cc_cost_usd`/`cc_num_turns`; tool_use/tool_result pairing emits ToolCallEvent, deny emits blocked event at rejection point with toolUseID dedup); **guards** (`--cc-max-turns=15` returns partial text, `--cc-budget=0.5` self-implemented abort via read-time pricing accumulation). `distiller.ts` intentionally stays on bare Anthropic. Router/pattern/a2a `reply()` call sites unchanged.
+
 ## Source Structure
 
 ```
@@ -149,11 +160,19 @@ src/
 │   ├── agent/ router/ orchestrator/ pattern/   # memory injection chain
 │   ├── repl.ts / runtime.ts     # REPL 交互模式（无参启动）+ 运行时开关（/memory /kbwrite → rebuild）
 │   └── storage/                 # SQLite: adds kb_entries + kb_reads + kb_distill_runs
-└── phase-08-observability/      # Observability (traces + spans, mini-OTel)
-    ├── observability/           # Tracer (ALS), Logger (JSONL), pricing, trajectory (tree render)
-    ├── agent/ router/ orchestrator/ pattern/ a2a/   # span instrumentation
-    ├── cli.ts / repl.ts / runtime.ts  # trace wiring + trace/stats subcommands + receipts
-    └── storage/                 # SQLite: adds traces + spans (Span tree, ms)
+├── phase-08-observability/      # Observability (traces + spans, mini-OTel)
+│   ├── observability/           # Tracer (ALS), Logger (JSONL), pricing, trajectory (tree render)
+│   ├── agent/ router/ orchestrator/ pattern/ a2a/   # span instrumentation
+│   ├── cli.ts / repl.ts / runtime.ts  # trace wiring + trace/stats subcommands + receipts
+│   └── storage/                 # SQLite: adds traces + spans (Span tree, ms)
+└── phase-09-claude-code-brain/  # Brain abstraction + Claude Code runtime (= phase-08 copy + additions)
+    ├── agent/brain.ts           # ★ Brain interface (reply(req, events))
+    ├── agent/anthropic-brain.ts # ★ Phase 6/8 LLM loop moved verbatim (fallback)
+    ├── agent/claude-code-brain.ts # ★ Agent SDK query() + stream state machine + budget guard + kb MCP
+    ├── agent/cc-permissions.ts  # ★ canUseTool→Sandbox mapping (fail-closed)
+    ├── registry/                # AgentConfig + runtime field
+    ├── cli.ts / repl.ts / runtime.ts  # --brain/--cc-* flags · makeBrainFactory · brainDeps()
+    └── observability/trajectory.ts    # llm summary + cc $x(SDK) display
 ```
 
 ## Agent Configuration
@@ -162,6 +181,7 @@ Agents are defined as JSON in `config/agents/`:
 - `id`: Unique identifier
 - `name`, `emoji`: Display info
 - `model`: LLM model (e.g., "claude-opus-4-8")
+- `runtime` (Phase 9): `anthropic` (bare API + tool loop) or `claude-code` (CC agentic loop); omitted = anthropic
 - `persona`: System prompt defining personality
 - `traits`: Additional metadata
 
@@ -185,7 +205,8 @@ docs/
     ├── _template.md             # ADR template (NNNN-short-desc.md)
     ├── _template-bugfix.md      # bug-fix postmortem template
     ├── 013-trace-span-tree-als.md       # P8: Span tree + ALS design
-    └── 014-fix-p7-001-pattern-agents-flag-ignored.md  # P7 regression found via traces
+    ├── 014-fix-p7-001-pattern-agents-flag-ignored.md  # P7 regression found via traces
+    └── 015-brain-abstraction-cc-runtime.md            # P9: Brain abstraction + Claude Code runtime
 ```
 
 Truth sources:
@@ -210,7 +231,9 @@ Truth sources:
 
 ## Current Progress
 
-Phases 0-8 complete. Phase 9 (Web UI & Productization, optional) is next.
+Phases 0-9 complete. Phase 10 (Web UI & Productization, optional) is next.
+
+Phase 9 added the **Brain abstraction + Claude Code runtime**: the LLM loop is extracted from `Agent` into a swappable `Brain` interface; `ClaudeCodeBrain` embeds `@anthropic-ai/claude-agent-sdk` `query()` so bob/nim/ji-tui (all default `runtime: "claude-code"`) get the full CC agentic loop (native Read/Edit/Bash/Grep). Hard Rails preserved via `canUseTool`→`Sandbox` mapping with `settingSources: []` isolation (user allow-rules must not leak in — bypass found and fixed in testing); kb tools mounted in-process as the `team-kb` MCP server (attribution passes through, gates honored). Observability maps cleanly: per-turn llm spans, CC tool spans via tool_use/tool_result pairing, `cc_cost_usd` (SDK-authoritative cost) on the final span; guards `--cc-max-turns=15` / `--cc-budget=0.5`. Fallback: `--brain=anthropic` behaves exactly like Phase 8. Design and pitfalls in ADR-015.
 
 Phase 8 added **observability**: a `traces`+`spans` Span tree (mini-OTel; parent_id self-referencing; kinds route/kb/agent/llm/tool/a2a/distill) with AsyncLocalStorage context propagation (immutable derived context — parallel fan-out safe), written via `runSpan` (wrap) / `recordSpan` (event-driven). LLM token usage captured at all 3 call sites via `onLlmCall` events → llm spans; billing is read-time × `config/pricing.json` (`stats` subcommand, `--by=agent|thread|day`). Replay: `trace [list]` / `trace show <id|last> [--full]` waterfall tree; every chat/pattern/distill run prints a 📊 receipt. Structured logs: `logs/<date>.jsonl` + stderr threshold (`--verbose`), never stdout. Design in ADR-013; the trace view exposed and fixed a Phase 7 regression (`--agents=` silently ignored in pipeline/parallel — ADR-014, fixed in phase-08 only). Smoke: `npm run smoke8`.
 

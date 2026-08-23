@@ -16,8 +16,9 @@
 | 7 | 共享记忆与知识库 | ✅ 完成 | [phase-07](./phase-07-shared-memory.md) |
 | 7.5 | 交互体验优化（参照 Claude Code） | 🔄 进行中 | [phase-07.5](./phase-07.5-interaction-ux.md) |
 | 8 | 可观测性（Trace/Span 树/计费/回放） | ✅ 完成 | [phase-08](./phase-08-observability.md) |
-| 9 | Web UI 与产品化（按需） | ⬜ 待办 | — |
-| 10 | 进阶主题（选学） | ⬜ 待办 | — |
+| 9 | Claude Code Brain（外部运行时接入） | ✅ 完成 | [phase-09](./phase-09-claude-code-brain.md) |
+| 10 | Web UI 与产品化（按需） | ⬜ 待办 | — |
+| 11 | 进阶主题（选学） | ⬜ 待办 | — |
 
 图例：🔄 进行中 ｜ ⬜ 待办 ｜ ✅ 完成
 
@@ -59,11 +60,15 @@ Agent 间共享长期记忆（决策、经验、证据）。技术点：共享�
 结构化日志、trace、token 计费、回放。验收：一次协作产出完整"轨迹"。
 → [详细文档](./phase-08-observability.md)
 
-### Phase 9 — Web UI 与产品化（按需，1-2 周）
-浏览器聊天界面（多线程、@路由、Agent 卡片）。⚠️ 内核（P1-P5）稳了再做。
+### Phase 9 — Claude Code Brain（2-3 天）
+Agent 的"脑+手"可替换：Brain 接口 + 接入 Claude Agent SDK（完整 agentic loop、canUseTool 沙箱映射、kb MCP 注入、cc 成本对账）。验收：bob/nim/ji-tui 默认 CC 能力、Hard Rails 守住、`--brain=anthropic` 可回退。
+→ [详细文档](./phase-09-claude-code-brain.md)
 
-### Phase 10 — 进阶主题（选学）
-自我演化、跨模型 provider、cron 调度、安全护栏、外部平台接入。
+### Phase 10 — Web UI 与产品化（按需，1-2 周）
+浏览器聊天界面（多线程、@路由、Agent 卡片）。⚠️ 内核（P1-P9）稳了再做。
+
+### Phase 11 — 进阶主题（选学）
+自我演化、跨模型 provider、cron 调度、安全护栏、CC 子代理（agents 选项）实验。
 
 ## 使用方式
 
